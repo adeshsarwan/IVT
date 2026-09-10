@@ -36,6 +36,9 @@
   "vars": {
     "IVT_MODE": "shadow",
     "RUNTIME_TTL_SECONDS": "60",
-    "ALLOWED_ORIGINS": "https://gamewhame.com,https://www.gamewhame.com"
+    "ALLOWED_ORIGINS": "https://gamewhame.com,https://www.gamewhame.com",
+    "NETWORK_PROVIDER": "none",
+    "NETWORK_CACHE_TTL_SECONDS": "86400",
+    "NETWORK_ERROR_TTL_SECONDS": "600"
   }
 }
