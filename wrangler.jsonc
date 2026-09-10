@@ -36,6 +36,7 @@
   "vars": {
     "IVT_MODE": "shadow",
     "RUNTIME_TTL_SECONDS": "60",
+    "TELEMETRY_TTL_SECONDS": "7200",
     "ALLOWED_ORIGINS": "https://gamewhame.com,https://www.gamewhame.com",
     "NETWORK_PROVIDER": "none",
     "NETWORK_CACHE_TTL_SECONDS": "86400",
