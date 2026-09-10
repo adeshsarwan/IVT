@@ -3,17 +3,20 @@
   "name": "thebes-ivt",
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-10",
+  "account_id": "4df8c97b1058bcf322f39d3dc24001f3",
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "thebes-ivt",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+      "database_id": "782249c2-950e-49c7-bc96-2593078e83ad",
+      "remote": true
     }
   ],
   "kv_namespaces": [
     {
       "binding": "IVT_CONFIG",
-      "id": "REPLACE_WITH_KV_NAMESPACE_ID"
+      "id": "82e5170879544d228cc09c29ca23cdea",
+      "remote": true
     }
   ],
   "durable_objects": {
@@ -32,6 +35,7 @@
   ],
   "vars": {
     "IVT_MODE": "shadow",
-    "RUNTIME_TTL_SECONDS": "60"
+    "RUNTIME_TTL_SECONDS": "60",
+    "ALLOWED_ORIGINS": "https://gamewhame.com,https://www.gamewhame.com"
   }
 }
