@@ -7,8 +7,8 @@
   "workers_dev": false,
   "routes": [
     {
-      "pattern": "ivt.thebesads.com/*",
-      "zone_name": "thebesads.com"
+      "pattern": "ivt.thebesads.com",
+      "custom_domain": true
     }
   ],
   "assets": {
