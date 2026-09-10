@@ -35,7 +35,7 @@ export function startTelemetry(options: TelemetryOptions): () => void {
   let visibilityChanges = 0;
   let focusChanges = 0;
   let sequence = 0;
-  let lastActivityAt = startedAt;
+  let lastActivityAt: number | null = null;
   let stopped = false;
 
   const activity = () => { lastActivityAt = performance.now(); };
@@ -56,7 +56,9 @@ export function startTelemetry(options: TelemetryOptions): () => void {
     const delta = Math.max(0, now - lastTick);
     if (document.visibilityState === "visible") visibleMs += delta;
     if (document.hasFocus()) focusedMs += delta;
-    if (now - lastActivityAt <= 15_000 && document.visibilityState === "visible") activeMs += delta;
+    if (lastActivityAt !== null && now - lastActivityAt <= 15_000 && document.visibilityState === "visible") {
+      activeMs += delta;
+    }
     lastTick = now;
   };
 
@@ -92,30 +94,30 @@ export function startTelemetry(options: TelemetryOptions): () => void {
     }).catch(() => undefined);
   };
 
-  addEventListener("pointerdown", onPointer, { passive: true });
-  addEventListener("touchstart", onTouch, { passive: true });
-  addEventListener("keydown", onKey, { passive: true });
-  addEventListener("scroll", onScroll, { passive: true });
-  addEventListener("visibilitychange", onVisibility, { passive: true });
-  addEventListener("focus", onFocus, { passive: true });
-  addEventListener("blur", onFocus, { passive: true });
+  window.addEventListener("pointerdown", onPointer, { passive: true });
+  window.addEventListener("touchstart", onTouch, { passive: true });
+  window.addEventListener("keydown", onKey, { passive: true });
+  window.addEventListener("scroll", onScroll, { passive: true });
+  document.addEventListener("visibilitychange", onVisibility, { passive: true });
+  window.addEventListener("focus", onFocus, { passive: true });
+  window.addEventListener("blur", onFocus, { passive: true });
 
   const interval = window.setInterval(() => send("heartbeat"), Math.max(15_000, options.heartbeatMs || 30_000));
   const onPageHide = () => send("final", true);
-  addEventListener("pagehide", onPageHide, { once: true });
+  window.addEventListener("pagehide", onPageHide, { once: true });
 
   return () => {
     if (stopped) return;
     stopped = true;
     clearInterval(interval);
-    removeEventListener("pointerdown", onPointer);
-    removeEventListener("touchstart", onTouch);
-    removeEventListener("keydown", onKey);
-    removeEventListener("scroll", onScroll);
-    removeEventListener("visibilitychange", onVisibility);
-    removeEventListener("focus", onFocus);
-    removeEventListener("blur", onFocus);
-    removeEventListener("pagehide", onPageHide);
+    window.removeEventListener("pointerdown", onPointer);
+    window.removeEventListener("touchstart", onTouch);
+    window.removeEventListener("keydown", onKey);
+    window.removeEventListener("scroll", onScroll);
+    document.removeEventListener("visibilitychange", onVisibility);
+    window.removeEventListener("focus", onFocus);
+    window.removeEventListener("blur", onFocus);
+    window.removeEventListener("pagehide", onPageHide);
     send("final", true);
   };
 }
