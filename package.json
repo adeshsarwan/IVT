@@ -5,11 +5,14 @@
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "build:sdk": "node scripts/build-sdk.mjs",
+    "build": "npm run check && npm run build:sdk",
+    "dev": "npm run build:sdk && wrangler dev",
+    "deploy": "npm run build && wrangler deploy"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260910.1",
+    "esbuild": "^0.25.9",
     "typescript": "^5.9.2",
     "wrangler": "^4.131.0"
   }
