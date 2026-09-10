@@ -1,12 +1,21 @@
+import { startTelemetry } from "./telemetry";
+
 type IVTOptions = {
   endpoint: string;
   siteKey: string;
+  heartbeatMs?: number;
 };
 
 type Admission = {
   status: string;
   runtime?: string;
+  telemetryToken?: string;
   expiresIn?: number;
+};
+
+type IVTResult = {
+  admitted: boolean;
+  stopTelemetry?: () => void;
 };
 
 function randomNonce(): string {
@@ -61,7 +70,7 @@ async function loadRuntime(endpoint: string, runtime: string): Promise<void> {
   });
 }
 
-export async function initIVT(options: IVTOptions): Promise<{ admitted: boolean }> {
+export async function initIVT(options: IVTOptions): Promise<IVTResult> {
   const endpoint = options.endpoint.replace(/\/$/, "");
   const response = await fetch(`${endpoint}/v1/admit`, {
     method: "POST",
@@ -80,9 +89,26 @@ export async function initIVT(options: IVTOptions): Promise<{ admitted: boolean 
 
   if (!response.ok) return { admitted: false };
   const admission = (await response.json()) as Admission;
-  if (admission.status !== "ADMITTED" || !admission.runtime) return { admitted: false };
-  await loadRuntime(endpoint, admission.runtime);
-  return { admitted: true };
+  if (admission.status !== "ADMITTED" || !admission.runtime || !admission.telemetryToken) {
+    return { admitted: false };
+  }
+
+  // Telemetry is IVT-only. The token is short-lived and signed by the Worker; it contains
+  // no GAM, Price Optimiser, buyer credential, or monetisation configuration.
+  const stopTelemetry = startTelemetry({
+    endpoint,
+    token: admission.telemetryToken,
+    heartbeatMs: options.heartbeatMs,
+  });
+
+  try {
+    await loadRuntime(endpoint, admission.runtime);
+  } catch (error) {
+    stopTelemetry();
+    throw error;
+  }
+
+  return { admitted: true, stopTelemetry };
 }
 
 // Optional auto-init for script-tag integrations. The SDK remains unaware of what runtime follows admission.
@@ -90,5 +116,12 @@ const current = document.currentScript as HTMLScriptElement | null;
 if (current?.dataset.autoInit === "true") {
   const endpoint = current.dataset.endpoint;
   const siteKey = current.dataset.siteKey;
-  if (endpoint && siteKey) void initIVT({ endpoint, siteKey });
+  const heartbeatMs = current.dataset.heartbeatMs ? Number(current.dataset.heartbeatMs) : undefined;
+  if (endpoint && siteKey) {
+    void initIVT({
+      endpoint,
+      siteKey,
+      heartbeatMs: Number.isFinite(heartbeatMs) ? heartbeatMs : undefined,
+    }).catch(() => undefined);
+  }
 }
