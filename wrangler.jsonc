@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "thebes-ivt",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-10",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "thebes-ivt",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "IVT_CONFIG",
+      "id": "REPLACE_WITH_KV_NAMESPACE_ID"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "REPLAY_GUARD",
+        "class_name": "ReplayGuard"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ReplayGuard"]
+    }
+  ],
+  "vars": {
+    "IVT_MODE": "shadow",
+    "RUNTIME_TTL_SECONDS": "60"
+  }
+}
