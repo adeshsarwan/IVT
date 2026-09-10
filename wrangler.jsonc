@@ -4,6 +4,13 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-10",
   "account_id": "4df8c97b1058bcf322f39d3dc24001f3",
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "ivt.thebesads.com/*",
+      "zone_name": "thebesads.com"
+    }
+  ],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
