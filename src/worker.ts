@@ -77,6 +77,24 @@ function configuredOrigin(request: Request, env: Env): string | null {
   return allowed.has(origin) ? origin : null;
 }
 
+function runtimeRequestOrigin(request: Request, env: Env): string | null {
+  const allowed = new Set(env.ALLOWED_ORIGINS.split(",").map((v) => v.trim()).filter(Boolean));
+
+  const origin = request.headers.get("Origin");
+  if (origin && allowed.has(origin)) return origin;
+
+  const referer = request.headers.get("Referer");
+  if (!referer) return null;
+
+  try {
+    const parsed = new URL(referer);
+    const refererOrigin = parsed.origin;
+    return allowed.has(refererOrigin) ? refererOrigin : null;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeHostname(hostname: string): string {
   return hostname.trim().toLowerCase().replace(/^www\./, "").replace(/\.$/, "");
 }
@@ -404,7 +422,7 @@ export default {
     }
 
     if (url.pathname.startsWith("/v1/runtime/") && request.method === "GET") {
-      const origin = configuredOrigin(request, env);
+      const origin = runtimeRequestOrigin(request, env);
       if (!origin) return new Response("", { status: 403 });
       const capability = url.pathname.slice("/v1/runtime/".length);
       if (!/^[a-f0-9]{64}$/i.test(capability)) return new Response("", { status: 404 });
