@@ -1,4 +1,5 @@
-import { getNetworkIntel, scoreNetworkRisk, type NetworkIntel } from "./network";
+import { getNetworkIntel, scoreNetworkRisk } from "./network";
+import { evaluateIdentityRisk } from "./identity";
 
 export interface Env {
   DB: D1Database;
@@ -181,7 +182,6 @@ function scoreBrowser(body: AdmitBody, edge: EdgeEvidence): Component {
   if (browser.webdriver === true) { score += 45; reasons.push("WEBDRIVER_TRUE"); }
   if (!ua) { score += 15; reasons.push("BROWSER_UA_MISSING"); }
   if (browser.cookieEnabled === false) { score += 5; reasons.push("COOKIES_DISABLED"); }
-  // Optional only: current Cloudflare plan may not provide these fields.
   if (edge.verifiedBot === 1) { score += 60; reasons.push("CF_VERIFIED_BOT"); }
   else if (edge.botScore !== null && edge.botScore <= 10) { score += 45; reasons.push("CF_BOT_SCORE_VERY_LOW"); }
   return { score: Math.min(65, score), reasons };
@@ -220,7 +220,6 @@ function scoreBehavior(t: TelemetryBody): Component {
   const active = t.activeMs || 0;
   const interactions = (t.pointerEvents || 0) + (t.touchEvents || 0) + (t.keyEvents || 0);
   const scroll = t.maxScrollPct || 0;
-  // Weak evidence only. H5 players may legitimately interact inside an iframe and not scroll the parent page.
   if (elapsed >= 60000 && visible >= 30000 && active === 0 && interactions === 0 && scroll === 0) {
     score += 10;
     reasons.push("LONG_VISIBLE_NO_ACTIVITY");
@@ -276,21 +275,28 @@ export default {
 
       const rawIp = request.headers.get("CF-Connecting-IP");
       const ipHash = rawIp ? await hmacHex(env.IVT_HASH_SECRET, rawIp) : null;
-      const networkIntel = await getNetworkIntel(env, rawIp, ipHash);
-      const network = scoreNetworkRisk(networkIntel);
-      const browser = scoreBrowser(body, edge);
-      const sourceRisk = scoreSource(source);
-      const identity: Component = { score: 0, reasons: [] };
-      const behavior: Component = { score: 0, reasons: [] };
-      const total = Math.min(100, network.score + browser.score + sourceRisk.score + identity.score + behavior.score);
-      const classification = riskClass(total);
-      const decision = mode === "shadow" ? shadowDecision(classification) : enforceDecision(classification);
-
       const nonceHash = await hmacHex(env.IVT_HASH_SECRET, body.nonce);
       const clickIdHash = source.clickId ? await hmacHex(env.IVT_HASH_SECRET, source.clickId) : null;
       const ua = typeof body.browser?.ua === "string" ? body.browser.ua.slice(0, 1024) : "";
       const userAgentHash = ua ? await hmacHex(env.IVT_HASH_SECRET, ua) : null;
       const browserEvidenceHash = body.browser ? await hmacHex(env.IVT_HASH_SECRET, canonicalize(body.browser)) : null;
+
+      const networkIntel = await getNetworkIntel(env, rawIp, ipHash);
+      const network = scoreNetworkRisk(networkIntel);
+      const browser = scoreBrowser(body, edge);
+      const sourceRisk = scoreSource(source);
+      const identityResult = await evaluateIdentityRisk({
+        db: env.DB,
+        siteId: site.id,
+        clickIdHash,
+        ipHash,
+        browserEvidenceHash,
+      });
+      const identity: Component = { score: identityResult.score, reasons: identityResult.reasons };
+      const behavior: Component = { score: 0, reasons: [] };
+      const total = Math.min(100, network.score + browser.score + sourceRisk.score + identity.score + behavior.score);
+      const classification = riskClass(total);
+      const decision = mode === "shadow" ? shadowDecision(classification) : enforceDecision(classification);
 
       await env.DB.prepare(`INSERT INTO traffic_sessions
         (id, site_id, client_nonce_hash, source_class, declared_source, click_id_type, click_id_hash,
@@ -315,6 +321,18 @@ export default {
         boolDb(networkIntel.hosting), boolDb(networkIntel.proxy), boolDb(networkIntel.tor), boolDb(networkIntel.relay), boolDb(networkIntel.vpn),
         boolDb(networkIntel.residentialProxy), networkIntel.service, networkIntel.cacheStatus, networkIntel.lookupMs).run();
 
+      await env.DB.prepare(`INSERT INTO identity_signals
+        (session_id, click_reuse_24h, ip_sessions_10m, ip_browser_fanout_24h, browser_sessions_10m, browser_ip_fanout_24h)
+        VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(
+        sessionId,
+        identityResult.signals.clickReuse24h,
+        identityResult.signals.ipSessions10m,
+        identityResult.signals.ipBrowserFanout24h,
+        identityResult.signals.browserSessions10m,
+        identityResult.signals.browserIpFanout24h,
+      ).run();
+
       await Promise.all([
         storeComponent(env, sessionId, "network", network),
         storeComponent(env, sessionId, "browser", browser),
@@ -323,7 +341,7 @@ export default {
         storeComponent(env, sessionId, "source", sourceRisk),
       ]);
 
-      const reasons = [...network.reasons, ...browser.reasons, ...sourceRisk.reasons];
+      const reasons = [...network.reasons, ...browser.reasons, ...identity.reasons, ...sourceRisk.reasons];
       if (reasons.length) await env.DB.prepare("INSERT INTO ivt_events (session_id, event_type, event_data) VALUES (?, 'RISK_REASONS', ?)").bind(sessionId, JSON.stringify(reasons)).run();
       if (source.clickId && source.clickIdType) {
         await env.DB.prepare("INSERT INTO click_reconciliation (session_id, platform, status) VALUES (?, ?, 'CAPTURED')")
@@ -372,7 +390,6 @@ export default {
         ).bind(claims.sid, body.sequence, body.eventType, body.elapsedMs, body.visibleMs, body.focusedMs, body.activeMs,
           body.maxScrollPct, body.pointerEvents, body.touchEvents, body.keyEvents, body.visibilityChanges, body.focusChanges).run();
       } catch {
-        // Duplicate heartbeat sequences are idempotent from the SDK's perspective.
         return json({ ok: true, duplicate: true }, 200, origin);
       }
 
