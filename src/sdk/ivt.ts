@@ -18,6 +18,10 @@ type IVTResult = {
   stopTelemetry?: () => void;
 };
 
+type IVTWindow = Window & {
+  __THEBES_IVT_INIT__?: Promise<IVTResult>;
+};
+
 function randomNonce(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
@@ -70,7 +74,7 @@ async function loadRuntime(endpoint: string, runtime: string): Promise<void> {
   });
 }
 
-export async function initIVT(options: IVTOptions): Promise<IVTResult> {
+async function performInit(options: IVTOptions): Promise<IVTResult> {
   const endpoint = options.endpoint.replace(/\/$/, "");
   const response = await fetch(`${endpoint}/v1/admit`, {
     method: "POST",
@@ -109,6 +113,25 @@ export async function initIVT(options: IVTOptions): Promise<IVTResult> {
   }
 
   return { admitted: true, stopTelemetry };
+}
+
+export function initIVT(options: IVTOptions): Promise<IVTResult> {
+  const w = window as IVTWindow;
+
+  // One document gets one admission attempt. This protects analytics and velocity counters
+  // from duplicate script tags, tag managers, extensions, framework re-hydration, or callers
+  // invoking initIVT() more than once. A real page navigation creates a fresh Window/document
+  // and therefore a fresh admission as intended.
+  if (!w.__THEBES_IVT_INIT__) {
+    w.__THEBES_IVT_INIT__ = performInit(options).catch((error) => {
+      // Permit a deliberate retry only after a genuine initialization failure. Concurrent
+      // callers still share the same in-flight promise and cannot create duplicate admissions.
+      delete w.__THEBES_IVT_INIT__;
+      throw error;
+    });
+  }
+
+  return w.__THEBES_IVT_INIT__;
 }
 
 // Optional auto-init for script-tag integrations. The SDK remains unaware of what runtime follows admission.
