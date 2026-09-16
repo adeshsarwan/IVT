@@ -1,4 +1,4 @@
-import { getNetworkIntel, scoreNetworkRisk } from "./network";
+import { getNetworkIntel, observeOnlyNetworkRisk } from "./network";
 import { evaluateIdentityRisk } from "./identity";
 
 export interface Env {
@@ -11,7 +11,8 @@ export interface Env {
   ALLOWED_ORIGINS: string;
   IVT_HASH_SECRET: string;
   IPINFO_TOKEN?: string;
-  NETWORK_PROVIDER?: string;
+  IPINFO_MODE?: string;
+  IPINFO_TIMEOUT_MS?: string;
   NETWORK_CACHE_TTL_SECONDS?: string;
   NETWORK_ERROR_TTL_SECONDS?: string;
 }
@@ -172,7 +173,7 @@ function attrString(attr: Record<string, unknown> | undefined, key: string): str
   const value = attr?.[key];
   return typeof value === "string" && value.length ? value.slice(0, 512) : null;
 }
-function classifySource(body: AdmitBody): SourceResult {
+export function classifySource(body: AdmitBody): SourceResult {
   const attr = body.attribution;
   const candidates: Array<[string, string]> = [
     ["gclid", "GOOGLE_PAID"], ["gbraid", "GOOGLE_PAID"], ["wbraid", "GOOGLE_PAID"],
@@ -212,16 +213,16 @@ function scoreSource(source: SourceResult): Component {
   if (source.sourceClass === "META_PAID" && declared && !/(facebook|meta|instagram)/.test(declared)) { score += 10; reasons.push("SOURCE_DECLARATION_MISMATCH"); }
   return { score, reasons };
 }
-function riskClass(score: number): RiskClass {
+export function riskClass(score: number): RiskClass {
   return score >= 80 ? "PROBABLE_IVT" : score >= 60 ? "HIGH_RISK" : score >= 40 ? "SUSPICIOUS" : score >= 20 ? "OBSERVE" : "CLEAN";
 }
-function shadowDecision(c: RiskClass): string {
+export function shadowDecision(c: RiskClass): string {
   if (c === "CLEAN") return "WOULD_PASS";
   if (c === "OBSERVE") return "WOULD_OBSERVE";
   if (c === "SUSPICIOUS") return "WOULD_CHALLENGE";
   return "WOULD_BLOCK";
 }
-function enforceDecision(c: RiskClass): string {
+export function enforceDecision(c: RiskClass): string {
   if (c === "CLEAN") return "PASS";
   if (c === "OBSERVE") return "OBSERVE";
   if (c === "SUSPICIOUS") return "CHALLENGE";
@@ -300,7 +301,8 @@ export default {
       const browserEvidenceHash = body.browser ? await hmacHex(env.IVT_HASH_SECRET, canonicalize(body.browser)) : null;
 
       const networkIntel = await getNetworkIntel(env, rawIp, ipHash);
-      const network = scoreNetworkRisk(networkIntel);
+      // IPinfo is evidence only. It must not contribute to risk, classification, or decisions.
+      const network = observeOnlyNetworkRisk();
       const browser = scoreBrowser(body, edge);
       const sourceRisk = scoreSource(source);
       const identityResult = await evaluateIdentityRisk({
@@ -333,11 +335,18 @@ export default {
 
       await env.DB.prepare(`INSERT INTO network_evidence
         (session_id, ip_hash, asn, country, provider, provider_version, hosting, proxy, tor, relay, vpn,
-         residential_proxy, service, cache_status, lookup_ms)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         residential_proxy, service, cache_status, lookup_ms, cf_asn, cf_country,
+         ipinfo_lookup_status, ipinfo_cache_status, ipinfo_vpn, ipinfo_proxy, ipinfo_tor,
+         ipinfo_hosting, ipinfo_relay, ipinfo_residential_proxy, ipinfo_privacy, ipinfo_service,
+         ipinfo_asn, ipinfo_as_name, ipinfo_as_type, ipinfo_country)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(sessionId, ipHash || "", edge.asn, edge.country, networkIntel.provider, networkIntel.providerVersion || null,
         boolDb(networkIntel.hosting), boolDb(networkIntel.proxy), boolDb(networkIntel.tor), boolDb(networkIntel.relay), boolDb(networkIntel.vpn),
-        boolDb(networkIntel.residentialProxy), networkIntel.service, networkIntel.cacheStatus, networkIntel.lookupMs).run();
+        boolDb(networkIntel.residentialProxy), networkIntel.service, networkIntel.cacheStatus.toUpperCase(), networkIntel.lookupMs,
+        edge.asn, edge.country, networkIntel.lookupStatus, networkIntel.cacheStatus,
+        boolDb(networkIntel.vpn), boolDb(networkIntel.proxy), boolDb(networkIntel.tor), boolDb(networkIntel.hosting),
+        boolDb(networkIntel.relay), boolDb(networkIntel.residentialProxy), boolDb(networkIntel.privacy), networkIntel.service,
+        networkIntel.asn, networkIntel.asName, networkIntel.asType, networkIntel.country).run();
 
       await env.DB.prepare(`INSERT INTO identity_signals
         (session_id, click_reuse_24h, ip_sessions_10m, ip_browser_fanout_24h, browser_sessions_10m, browser_ip_fanout_24h)

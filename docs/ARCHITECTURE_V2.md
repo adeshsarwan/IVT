@@ -122,6 +122,18 @@ The Worker calls a provider abstraction only when needed:
 7. Cache normalized result in KV with provider timestamp/version.
 8. Persist only normalized flags + IP HMAC in D1; do not persist raw IP by default.
 
+The first IPinfo release is strictly observe-only. `IPINFO_MODE=off` disables the
+lookup and is the code default; `IPINFO_MODE=observe` enables enrichment. In both
+modes the provider contributes zero to `network_risk`, `risk_score`, classification,
+and the admission decision. IPinfo evidence remains available for later calibration.
+
+The Worker uses the current IPinfo `/lookup` API with the secret in an Authorization
+header, a bounded timeout, and the existing `IVT_CONFIG` KV namespace. Cache keys use
+the existing HMAC of the connecting IP rather than the raw IP. Successful normalized
+responses are cached for `NETWORK_CACHE_TTL_SECONDS` (24 hours by default); failures
+use `NETWORK_ERROR_TTL_SECONDS` (10 minutes by default). Cache and provider failures
+fail open and are recorded only as safe status values.
+
 This design allows IPinfo API initially and later a downloadable-database/range lookup service without changing the IVT scoring API.
 
 Suggested cache TTLs:
@@ -138,9 +150,11 @@ The supplied sample contains `network`, `hosting`, `proxy`, `tor`, `relay`, `vpn
 
 For initial traffic, API + KV caching is operationally simplest. At high volume, database downloads can eliminate per-request API calls while keeping the same normalized provider contract.
 
-## Revenue-safe policy
+## Later calibrated revenue-safe policy
 
-Strong single signals may trigger high risk, but most decisions require multiple independent signals. Examples:
+The following is future policy guidance and is not active in the observe-only IPinfo
+release. Once production evidence has been calibrated, strong single signals may
+trigger high risk, but most decisions should require multiple independent signals. Examples:
 - VPN alone: weak/moderate network risk only.
 - hosting alone: moderate risk, normally observe/challenge.
 - webdriver + missing browser APIs + hosting + high velocity: high confidence.

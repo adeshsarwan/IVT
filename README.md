@@ -35,6 +35,14 @@ Assume an attacker can read, modify, replay, or replace `ivt.js`. No client-prov
 - Durable Object: `ReplayGuard` for admission/runtime replay and velocity coordination
 - Optional/enhanced: Cloudflare Bot Management signals where available
 
+## IPinfo observe-only enrichment
+
+The Worker can enrich admissions with IPinfo when `IPINFO_MODE=observe` and the
+`IPINFO_TOKEN` Worker secret is configured. The code default is `off`. IPinfo calls
+are server-side only, use the existing `IVT_CONFIG` KV cache, and persist normalized
+evidence separately from Cloudflare country/ASN values. This release does not use
+IPinfo evidence in risk scores, classifications, or admission decisions.
+
 ## Security invariants
 
 - `ivt.js` never contains IVT thresholds or authoritative scoring rules.

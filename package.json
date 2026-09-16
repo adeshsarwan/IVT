@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
+    "test": "esbuild tests/network.test.ts --bundle --platform=node --format=esm --outfile=.wrangler/test/network.test.mjs && node --test .wrangler/test/network.test.mjs",
     "build:sdk": "node scripts/build-sdk.mjs",
     "build": "npm run check && npm run build:sdk",
     "dev": "npm run build:sdk && wrangler dev",
