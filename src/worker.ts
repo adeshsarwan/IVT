@@ -1,5 +1,6 @@
 import { getNetworkIntel, observeOnlyNetworkRisk } from "./network";
 import { evaluateIdentityRisk } from "./identity";
+import { monetizationEligibility } from "./eligibility";
 
 export interface Env {
   DB: D1Database;
@@ -384,7 +385,7 @@ export default {
       await guard.fetch("https://replay-guard/register", { method: "POST", body: JSON.stringify({ sessionId, origin, expiresAt: now + ttl * 1000 }) });
 
       const telemetryToken = await issueTelemetryToken(env, sessionId, origin);
-      return json({ status: "ADMITTED", runtime: `/v1/runtime/${capability}`, telemetryToken, expiresIn: ttl }, 200, origin);
+      return json({ status: "ADMITTED", monetization: { eligible: monetizationEligibility(classification, decision) }, runtime: `/v1/runtime/${capability}`, telemetryToken, expiresIn: ttl }, 200, origin);
     }
 
     if (url.pathname === "/v2/telemetry" && request.method === "POST") {

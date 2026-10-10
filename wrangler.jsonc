@@ -49,7 +49,7 @@
     "IVT_MODE": "shadow",
     "RUNTIME_TTL_SECONDS": "60",
     "TELEMETRY_TTL_SECONDS": "7200",
-    "ALLOWED_ORIGINS": "https://gamewhame.com,https://www.gamewhame.com",
+    "ALLOWED_ORIGINS": "https://gamewhame.com,https://www.gamewhame.com,https://jobsqualified.com,https://www.jobsqualified.com",
     "IPINFO_MODE": "observe",
     "IPINFO_TIMEOUT_MS": "1500",
     "NETWORK_CACHE_TTL_SECONDS": "86400",

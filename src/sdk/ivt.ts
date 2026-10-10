@@ -8,6 +8,7 @@ type IVTOptions = {
 
 type Admission = {
   status: string;
+  monetization?: { eligible?: boolean };
   runtime?: string;
   telemetryToken?: string;
   expiresIn?: number;
@@ -15,6 +16,7 @@ type Admission = {
 
 type IVTResult = {
   admitted: boolean;
+  monetizationEligible: boolean;
   stopTelemetry?: () => void;
 };
 
@@ -91,10 +93,10 @@ async function performInit(options: IVTOptions): Promise<IVTResult> {
     }),
   });
 
-  if (!response.ok) return { admitted: false };
+  if (!response.ok) return { admitted: false, monetizationEligible: false };
   const admission = (await response.json()) as Admission;
   if (admission.status !== "ADMITTED" || !admission.runtime || !admission.telemetryToken) {
-    return { admitted: false };
+    return { admitted: false, monetizationEligible: false };
   }
 
   // Telemetry is IVT-only. The token is short-lived and signed by the Worker; it contains
@@ -112,7 +114,7 @@ async function performInit(options: IVTOptions): Promise<IVTResult> {
     throw error;
   }
 
-  return { admitted: true, stopTelemetry };
+  return { admitted: true, monetizationEligible: admission.monetization?.eligible === true, stopTelemetry };
 }
 
 export function initIVT(options: IVTOptions): Promise<IVTResult> {
