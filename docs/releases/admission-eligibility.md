@@ -69,3 +69,28 @@ No schema migration or historical session rewrite is involved. Revert the releas
 ## Downstream contract
 
 Require `response.status === "ADMITTED" && response.monetization?.eligible === true`, or `result.admitted && result.monetizationEligible === true` from initIVT. Never infer eligibility from status, runtime loading or the admitted event. Missing/false eligibility must not authorize monetization. This release provides an admission-time client signal, not server-verifiable monetization authorization; the existing telemetry token is solely for IVT telemetry. Classification/decision remain internal by deliberate minimum-disclosure choice.
+
+
+## Completed release and production evidence
+
+Released 2026-10-10 (Asia/Kolkata). Implementation commit: `741c5ee106555892480b5e4ea66de20681993c9b`, pushed to `feature/ivt-v1-shadow`. Exactly one Worker release deployed: `010df5d6-50df-4a85-bfee-ad837fcc7b24`. The subsequent report-only commit does not require a deployment.
+
+Registration applied successfully: JobsQualified id=2, site_key=jobsqualified.com, hostname=jobsqualified.com, enabled=1, mode=shadow. Existing GameWhame id=1 and all registration fields remain unchanged. New version inspection confirms IVT_MODE=shadow and IPINFO_MODE=observe. The served `/v1/ivt.js` is byte-for-byte identical to the tested local build.
+
+Controlled live requests (synthetic test sessions, not publisher traffic measurements):
+
+| Phase | Origin | Input | Persisted score / class / decision | Eligible |
+| --- | --- | --- | --- | --- |
+| Before | https://gamewhame.com | normal | 0 / CLEAN / WOULD_PASS | absent (old contract) |
+| Before | https://www.gamewhame.com | normal | 0 / CLEAN / WOULD_PASS | absent (old contract) |
+| Before | https://gamewhame.com | webdriver | 45 / SUSPICIOUS / WOULD_CHALLENGE | absent (old contract) |
+| After | https://gamewhame.com | normal | 0 / CLEAN / WOULD_PASS | true |
+| After | https://www.gamewhame.com | normal | 0 / CLEAN / WOULD_PASS | true |
+| After | https://gamewhame.com | webdriver | 45 / SUSPICIOUS / WOULD_CHALLENGE | false |
+| After | https://jobsqualified.com | normal | 0 / CLEAN / WOULD_PASS | true |
+| After | https://www.jobsqualified.com | normal | 0 / CLEAN / WOULD_PASS | true |
+| After | https://jobsqualified.com | webdriver | 45 / SUSPICIOUS / WOULD_CHALLENGE | false |
+
+Every row returned admission HTTP 200 / ADMITTED, runtime HTTP 200, replay HTTP 404 and telemetry HTTP 200. Every persisted row has mode=shadow, network_risk=0 and ipinfo_lookup_status=hit. Automated comparison confirms old response fields and behavior match across GameWhame before/after cases after excluding random session/capability/token values and the additive monetization field. Both releases reject the unregistered test origin with HTTP 403. Public wildcard CORS behavior is unchanged.
+
+Local audit evidence (untracked, no bearer tokens or IPs): `.wrangler/eligibility-before.json`, `.wrangler/eligibility-after.json`, `.wrangler/eligibility-database-evidence.json`, `.wrangler/eligibility-tests.log`. Live test session IDs in these files allow D1 cross-checks. No Price Optimiser changes were made.
