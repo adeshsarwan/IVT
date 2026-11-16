@@ -6,10 +6,11 @@ import type { Freshness, GoogleClickRow, GooglePlatformData, NormalizedRequest, 
 import { buildReuseIndex, highBad, hourCurve, last24h, isBlockedPlacement, isReused, lowBad, ratioRules, type ReuseIndex } from './rules';
 import { dayDiff, inc, localDate, rateStat, round, toMs } from './util';
 import { isPlausibleClickId } from './normalize';
+import { connectorFloorReason, googleReportChecks, VT_NETWORK } from './tamper';
 
 export type GoogleOutcome =
   | 'matched' | 'unmatched' | 'invalid_click_id' | 'pending'
-  | 'unlinked_campaign' | 'braid_only' | 'no_click_id';
+  | 'unlinked_campaign' | 'braid_only' | 'no_click_id' | 'aggregate_only';
 
 export interface PlatformEval {
   status: WindowStatus;
@@ -56,6 +57,9 @@ export function evaluateGoogle(
   const clicks = new Map<string, GoogleClickRow>();
   if (usable) for (const c of data!.clicks) if (!clicks.has(c.GclId)) clicks.set(c.GclId, c);
   const campaignSet = usable && data!.campaignIds?.length ? new Set(data!.campaignIds) : null;
+  /** Aggregate-only data (UI report without gclids): no per-click lookup possible. */
+  const clickLevel = !usable || data!.clicks.length > 0 || !data!.dailyClicks?.length;
+  let paramMis = 0, paramN = 0;
 
   const sample = win.filter((r) => r.inSample);
   let anyId = 0, withTemplate = 0, braid = 0, invalid = 0, reused = 0, idsSeen = 0;
@@ -76,6 +80,7 @@ export function evaluateGoogle(
       if (!isPlausibleClickId(r.gclid) || macro) { o = 'invalid_click_id'; invalid++; }
       else if (!usable) o = 'pending';
       else if (!isComplete(localDate(r.ts, tz), data!.coveredThrough)) o = 'pending';
+      else if (!clickLevel) o = 'aggregate_only';
       else if ((row = clicks.get(r.gclid))) o = 'matched';
       else if (campaignSet && r.g.campaignId && !campaignSet.has(r.g.campaignId)) o = 'unlinked_campaign';
       else o = 'unmatched';
@@ -103,6 +108,12 @@ export function evaluateGoogle(
       }
       const pd = row.Device ? DEVICE[row.Device] : undefined;
       if (pd && r.uaDevice) { devN++; if (pd !== r.uaDevice) devMis++; }
+      // Platform row vs the ValueTrack values Google wrote into OUR landing URL for the same click.
+      const vt = r.g.network ? VT_NETWORK[r.g.network] : undefined;
+      if ((vt && row.AdNetworkType) || (r.g.campaignId && row.CampaignId)) {
+        paramN++;
+        if ((vt && row.AdNetworkType && vt !== row.AdNetworkType) || (r.g.campaignId && row.CampaignId && r.g.campaignId !== row.CampaignId)) paramMis++;
+      }
     } else {
       const pd = r.g.device ? DEVICE[r.g.device] : undefined;
       if (pd && r.uaDevice) { devN++; if (pd !== r.uaDevice) devMis++; }
@@ -133,6 +144,8 @@ export function evaluateGoogle(
   const unlinkedCampaignRate = rateStat(o('unlinked_campaign'), unlinkedDen, cfg.z);
   const gclidEvaluable = o('matched') + o('unmatched') + o('pending') + o('unlinked_campaign') + o('invalid_click_id');
   const pendingShare = gclidEvaluable ? o('pending') / gclidEvaluable : 0;
+  const paramMismatchRate = rateStat(paramMis, paramN, cfg.z);
+  let tamperStats: Record<string, number | null | undefined> = {};
 
   // ── Edge-only reasons (no platform data needed) ──
   const autoTagKnownOff = !!data?.accounts.some((a) => a.linked && a.autoTaggingEnabled === false);
@@ -177,12 +190,27 @@ export function evaluateGoogle(
     push(highBad('device_mismatch', 'Google device ≠ browser device', deviceMismatchRate, cfg.google.deviceMismatch, cfg, skipped));
     if (campaignSet) push(highBad('partial_account_access', 'gclids from campaigns outside the linked accounts', unlinkedCampaignRate, cfg.google.unlinkedCampaign, cfg, skipped, { cap: 2 }));
     if (unlinkedCampaignRate.rate !== null && unlinkedCampaignRate.rate > cfg.google.unlinkedCampaign.watch) access = 'partial';
+    push(highBad('platform_param_mismatch', 'clicks where Google\'s network/campaign ≠ the ValueTrack values in our URL', paramMismatchRate, cfg.connectors.paramMismatch, cfg, skipped));
+    if (!clickLevel) reasons.push({ code: 'click_level_unavailable', severity: sevOf(cfg.connectors.aggregateOnlyFloor), edgeOnly: true,
+      message: 'Google data is aggregate only (no gclid column): fake click ids cannot be detected one by one; day ratio and network mix still apply' });
 
     // Day ratio: all Google-claimed landings of this affiliate on complete days the window touched.
     const days = [...new Set(win.map((r) => localDate(r.ts, tz)))].filter((d) => isComplete(d, data.coveredThrough)).sort();
     const daySet = new Set(days);
     const ours = group.filter((r) => daySet.has(localDate(r.ts, tz))).length;
-    const platform = data.clicks.filter((c) => daySet.has(c.Date)).length;
+    const daily = (data.dailyClicks ?? []).filter((d) => daySet.has(d.Date));
+    const platform = clickLevel ? data.clicks.filter((c) => daySet.has(c.Date)).length : daily.reduce((a, d) => a + d.Clicks, 0);
+    if (!clickLevel) {
+      // Network mix from the aggregate report (counts, not a sample).
+      const known = daily.filter((d) => d.AdNetworkType);
+      const k = known.filter((d) => cfg.google.riskyNetworkTypes.includes(d.AdNetworkType!)).reduce((a, d) => a + d.Clicks, 0);
+      const tot = known.reduce((a, d) => a + d.Clicks, 0);
+      for (const d of known) inc(networkMix, d.AdNetworkType!, d.Clicks);
+      push(highBad('risky_network_reported', 'Search Partners / Display share in the Google report', rateStat(k, tot, cfg.z), cfg.google.riskyNetwork, cfg, skipped));
+    }
+    const tc = googleReportChecks(data, group, daySet, cfg, now, skipped);
+    reasons.push(...tc.reasons);
+    tamperStats = tc.stats;
     const rr = ratioRules('google', ours, platform, cfg.google.ratioHigh, cfg.google.ratioLowWatch, cfg, skipped, 'clicks');
     ratio = { ours, platform, value: rr.value === null || !Number.isFinite(rr.value) ? rr.value : round(rr.value, 4), days, metric: 'clicks' };
     reasons.push(...rr.reasons);
@@ -193,6 +221,8 @@ export function evaluateGoogle(
   else if (data && data.accounts.some((a) => !a.linked)) reasons.push({ code: 'unlinked_accounts', severity: sevOf(cfg.accessFloor.partial), edgeOnly: true,
     message: `${data!.accounts.filter((a) => !a.linked).length} of ${data!.accounts.length} Google accounts not linked` });
 
+  if (data && data.status !== 'no_access') push(connectorFloorReason(data.connector, cfg, 'Google'));
+
   if (skipped.length) reasons.push({ code: 'insufficient_sample', severity: 0, message: `skipped (too few to judge): ${[...new Set(skipped)].join(', ')}` });
 
   return {
@@ -202,6 +232,7 @@ export function evaluateGoogle(
       matchRate, noClickIdRate, braidShare: n ? round(braid / n) : 0, invalidClickIdRate, reusedClickIdRate,
       timingAnomalyRate, deviceMismatchRate, riskyNetworkRate, blockedPlacementRate, unlinkedCampaignRate,
       ratio, networkMix, placementMix: top(placementMix, 10), hourCurveEntropy: hc.entropy,
+      paramMismatchRate, clickLevel, connector: data?.connector?.type ?? (data ? 'api' : null), ...tamperStats,
     },
   };
 

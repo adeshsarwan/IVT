@@ -1,7 +1,9 @@
 // Every number the engine uses lives here. README §5 explains each one.
 // Thresholds are starting points to calibrate in shadow mode, not truths.
 
-import type { Source } from './types';
+import type { ConnectorType, Source } from './types';
+
+type TierName = 'OK' | 'WATCH' | 'THROTTLE' | 'BLOCK';
 
 /** Three-step thresholds for a rate where HIGH is bad.
  *  watch: point estimate > watch · throttle/block: Wilson LOWER bound > value (confidently bad). */
@@ -100,6 +102,23 @@ export interface ProvenanceConfig {
     unknownGraceMs: number;
   };
 
+  connectors: {
+    /** Minimum tier by how the platform data reached us (self-reported data can prove bad, not good). */
+    floors: Record<ConnectorType, TierName>;
+    /** Google data without gclids (UI aggregate report): click-level matching impossible. */
+    aggregateOnlyFloor: TierName;
+    /** Partner-supplied click list with almost no clicks we didn't see land = likely built from our own landings. */
+    mirrorBelow: number;
+    mirrorMinClicks: number;
+    /** Malformed / duplicate click ids inside a partner-supplied report. */
+    reportInvalid: HighBad;
+    reportDuplicate: HighBad;
+    /** Platform row says network/campaign X, our ValueTrack param on the same click says Y. */
+    paramMismatch: HighBad;
+    /** Share of affiliates picked for a manual spot audit per audit period, by connector strength. */
+    auditRates: { strong: number; medium: number; weak: number; none: number };
+  };
+
   /** Minimum tier when we lack partner access. */
   accessFloor: { none: 'OK' | 'WATCH' | 'THROTTLE' | 'BLOCK'; partial: 'OK' | 'WATCH' | 'THROTTLE' | 'BLOCK' };
 }
@@ -159,6 +178,21 @@ export const DEFAULT_CONFIG: ProvenanceConfig = {
   breaker: { blockConfirmWindows: 2, recoverWindows: 3, manualUnblock: true, unknownGraceMs: 48 * H },
 
   accessFloor: { none: 'THROTTLE', partial: 'WATCH' },
+
+  connectors: {
+    floors: {
+      api_mcc: 'OK', api_bq_transfer: 'OK', api_partner_token: 'OK',
+      ads_script_push: 'OK',
+      sheet_export: 'WATCH', email_report: 'WATCH', csv_upload: 'WATCH',
+    },
+    aggregateOnlyFloor: 'WATCH',
+    mirrorBelow: 0.005,
+    mirrorMinClicks: 1000,
+    reportInvalid: { watch: 0.001, throttle: 0.01, block: 0.05 },
+    reportDuplicate: { watch: 0.001, throttle: 0.01, block: 0.05 },
+    paramMismatch: { watch: 0.02, throttle: 0.05, block: 0.15 },
+    auditRates: { strong: 0.02, medium: 0.10, weak: 0.25, none: 1 },
+  },
 };
 
 type DeepPartial<T> = { [K in keyof T]?: T[K] extends (infer U)[] ? U[] : T[K] extends object ? DeepPartial<T[K]> : T[K] };

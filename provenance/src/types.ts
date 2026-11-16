@@ -92,6 +92,33 @@ export interface NormalizedRequest {
 
 export type PlatformStatus = 'ok' | 'error' | 'no_access';
 
+/** How the platform data reached us. Strength drives the trust floor and anti-tamper checks.
+ *  strong = we pull it from the platform ourselves; medium = code running in the partner's
+ *  account pushes it (they could edit it); weak = the partner hands us a file (self-reported). */
+export type ConnectorType =
+  | 'api_mcc'            // Google Ads API via our MCC + developer token (strong)
+  | 'api_bq_transfer'    // BigQuery Data Transfer ClickStats (strong)
+  | 'api_partner_token'  // a token the partner created (e.g. Meta system user); WE pull (strong)
+  | 'ads_script_push'    // Google Ads Script in the partner's account pushes signed rows (medium)
+  | 'sheet_export'       // scheduled Google Sheets / Looker Studio export (weak)
+  | 'email_report'       // scheduled report e-mailed to our inbox (weak)
+  | 'csv_upload';        // partner uploads a CSV in the partner portal (weak)
+
+export interface ConnectorInfo {
+  type: ConnectorType;
+  /** Connector instance id (registry key), for status views. */
+  id?: string;
+}
+
+/** Aggregate Google clicks (UI reports usually have no gclid column): one row per day × campaign (× network × device). */
+export interface GoogleDailyRow {
+  Date: string;
+  CampaignId?: string;
+  Clicks: number;
+  AdNetworkType?: string;
+  Device?: string;
+}
+
 /** One row shaped like Google Ads `click_view` / BigQuery DTS `ClickStats_<cid>`. */
 export interface GoogleClickRow {
   GclId: string;
@@ -132,6 +159,10 @@ export interface GooglePlatformData {
   clicks: GoogleClickRow[];
   /** All campaign ids in the linked accounts (lets us tell "unlinked account" from "forged"). */
   campaignIds?: string[];
+  /** Aggregate-only data (no gclids). Used for the day ratio and network mix when `clicks` is empty. */
+  dailyClicks?: GoogleDailyRow[];
+  /** Where this data came from. Absent = treated as a strong API pull. */
+  connector?: ConnectorInfo;
 }
 
 /** One row shaped like a Meta Insights response at level=ad, time_increment=1,
@@ -164,6 +195,7 @@ export interface MetaPlatformData {
   insights: MetaInsightRow[];
   /** All ad ids in the linked accounts, if pulled (else derived from insights). */
   adIds?: string[];
+  connector?: ConnectorInfo;
 }
 
 export interface AffiliatePlatformData {
@@ -237,6 +269,16 @@ export interface WindowStats {
   hourCurveEntropy?: number | null;
   /** Meta: ads where our landings exceed the platform's link clicks. */
   inflatedAds?: { adId: string; ours: number; linkClicks: number }[];
+  /** Google: matched clicks whose platform network/campaign disagrees with our ValueTrack params. */
+  paramMismatchRate?: RateStat;
+  /** Google: false when the data is aggregate only (no gclids). */
+  clickLevel?: boolean;
+  /** Connector type of the platform data ('api' when unspecified). */
+  connector?: string | null;
+  /** Partner-supplied report: malformed / duplicate gclid share, share of reported clicks that never landed. */
+  reportInvalid?: number;
+  reportDuplicate?: number;
+  platformOnlyShare?: number | null;
 }
 
 export interface WindowResult {

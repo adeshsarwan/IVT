@@ -9,6 +9,7 @@ import { buildReuseIndex, highBad, hourCurve, last24h, isBlockedPlacement, isReu
 import { freshnessOf, isComplete, sevOf, top, type PlatformEval } from './google';
 import { inc, localDate, rateStat, round } from './util';
 import { isPlausibleClickId } from './normalize';
+import { connectorFloorReason, metaReportChecks } from './tamper';
 
 const isAN = (r: NormalizedRequest) =>
   (r.m.siteSource || '').toLowerCase() === 'an' || /^an[_\s-]|audience[_ ]?network/i.test(r.m.placement || '');
@@ -133,6 +134,9 @@ export function evaluateMeta(
       .map(([adId, c]) => ({ adId, ours: c, linkClicks: linkByAd[adId] }))
       .sort((a, b) => b.ours - b.linkClicks - (a.ours - a.linkClicks) || (a.adId < b.adId ? -1 : 1))
       .slice(0, 10);
+    const oursByAdDay: Record<string, number> = {};
+    for (const r of ourRows) if (r.m.adId) inc(oursByAdDay, `${r.m.adId}|${localDate(r.ts, tz)}`);
+    reasons.push(...metaReportChecks(rows, oursByAdDay, data.connector, cfg));
     if (inflatedAds.length) reasons.push({ code: 'ad_level_inflation', severity: 1, value: inflatedAds.length,
       message: `${inflatedAds.length} ad(s) have more landings than link clicks × ${cfg.meta.adInflationFactor}: e.g. ad ${inflatedAds[0].adId} ${inflatedAds[0].ours} vs ${inflatedAds[0].linkClicks}` });
   }
@@ -142,6 +146,8 @@ export function evaluateMeta(
   else if (data && data.accounts.some((a) => !a.linked)) reasons.push({ code: 'unlinked_accounts', severity: sevOf(cfg.accessFloor.partial), edgeOnly: true,
     message: `${data.accounts.filter((a) => !a.linked).length} of ${data.accounts.length} Meta ad accounts not shared` });
 
+  if (data && data.status !== 'no_access') { const f = connectorFloorReason(data.connector, cfg, 'Meta'); if (f) reasons.push(f); }
+
   if (skipped.length) reasons.push({ code: 'insufficient_sample', severity: 0, message: `skipped (too few to judge): ${[...new Set(skipped)].join(', ')}` });
 
   return {
@@ -150,6 +156,7 @@ export function evaluateMeta(
       requests: win.length, sampled: n, outcomes,
       fbclidMissingRate, invalidClickIdRate, reusedClickIdRate, blockedPlacementRate, unknownAdRate,
       audienceNetworkShare, ratio, lpvRatio, inflatedAds, placementMix: top(placementMix, 10), hourCurveEntropy: hc.entropy,
+      connector: data?.connector?.type ?? (data ? 'api' : null),
     },
   };
 

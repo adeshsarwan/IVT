@@ -8,3 +8,6 @@ export { evaluateMeta } from './meta';
 export { applyWindow, initialBreaker, manualReset } from './breaker';
 export { wilson, inSample, fnv1a, localDate } from './util';
 export { SCENARIOS, buildScenario, type ScenarioId } from './scenarios';
+export * from './connectors';
+export { connectorFloorReason, googleReportChecks, metaReportChecks, VT_NETWORK } from './tamper';
+export * from './fleet';
