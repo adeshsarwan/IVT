@@ -107,7 +107,7 @@ describe('ad pass: valid flow', () => {
     assert.equal(claims.o, 'https://gamewhame.com');
     assert.equal(claims.sk, 'gamewhame.com');
     assert.equal(claims.aff, '42');
-    assert.equal(claims.exp - claims.iat, 60);
+    assert.equal(claims.exp - claims.iat, 1800);
     assert.ok(!body.adPass.includes(IP) && !JSON.stringify(claims).includes('203.0.113'));
 
     const res = await adUnits(h, body.adPass);
@@ -132,7 +132,7 @@ describe('ad pass: valid flow', () => {
     assert.notEqual(await dailyAuditKey(SECRET, 'a.com', day), await dailyAuditKey(SECRET, 'b.com', day));
   });
   it('TTL is configurable and clamped', async () => {
-    for (const [ttl, expected] of [['120', 120], ['1', 15], ['99999', 300], ['nope', 60]] as const) {
+    for (const [ttl, expected] of [['120', 120], ['3600', 3600], ['1', 15], ['99999', 3600], ['nope', 1800]] as const) {
       const body = await admit(harness({ vars: { AD_PASS_TTL_SECONDS: ttl } }));
       const c = claimsOf(body.adPass);
       assert.equal(c.exp - c.iat, expected);
@@ -220,7 +220,7 @@ describe('ad pass: token verification', () => {
     const pass = await maybeIssueAdPass(h.env, {
       request: new Request('https://x', { headers: { 'CF-Connecting-IP': IP, 'User-Agent': UA } }),
       sessionId: 's1', siteId: 1, siteKey: 'gamewhame.com', origin: 'https://gamewhame.com', eligible: true,
-      nowMs: Date.now() - 61_000,
+      nowMs: Date.now() - 1801_000,
     });
     assert.ok(pass);
     await denied(await adUnits(h, pass));
@@ -266,21 +266,31 @@ describe('ad pass: token verification', () => {
 });
 
 describe('ad pass: single use', () => {
-  it('replay is rejected when single use is on (default)', async () => {
-    const h = harness();
+  it('release defaults: 30 minute pass, reusable', () => {
+    assert.equal(config.vars.AD_PASS_TTL_SECONDS, '1800');
+    assert.equal(config.vars.AD_PASS_SINGLE_USE, 'off');
+  });
+  it('replay is rejected when AD_PASS_SINGLE_USE=on', async () => {
+    const h = harness({ vars: { AD_PASS_SINGLE_USE: 'on' } });
     const pass = (await admit(h)).adPass;
     assert.equal((await adUnits(h, pass)).status, 200);
     await denied(await adUnits(h, pass));
   });
-  it('stateless-only mode accepts replay within TTL from the same IP+UA', async () => {
-    const h = harness({ vars: { AD_PASS_SINGLE_USE: 'off' } });
+  it('default (stateless) mode accepts reuse within TTL from the same IP+UA only', async () => {
+    const h = harness({ vars: { AD_PASS_SINGLE_USE: undefined } });
     const pass = (await admit(h)).adPass;
     assert.equal((await adUnits(h, pass)).status, 200);
     assert.equal((await adUnits(h, pass)).status, 200);
     await denied(await adUnits(h, pass, { ip: '198.51.100.1' }));
   });
-  it('replay guard unreachable denies', async () => {
-    const h = harness();
+  it('stateless mode never calls the Durable Object', async () => {
+    const h = harness({ vars: { AD_PASS_SINGLE_USE: 'off' } });
+    const pass = (await admit(h)).adPass;
+    h.state.guardThrows = true;
+    assert.equal((await adUnits(h, pass)).status, 200);
+  });
+  it('replay guard unreachable denies when single use is on', async () => {
+    const h = harness({ vars: { AD_PASS_SINGLE_USE: 'on' } });
     const pass = (await admit(h)).adPass;
     h.state.guardThrows = true;
     await denied(await adUnits(h, pass));

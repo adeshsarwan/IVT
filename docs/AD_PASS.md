@@ -23,7 +23,7 @@ ivt.js  ── POST /v1/admit ─────────────▶   score
 ads.js  ── POST /v1/ad-units {adPass} ──▶   origin allowlist, signature, kid, expiry,
                                            policy version, origin, IP /24|/64 + UA binding
                                            kill switches + config re-checked
-                                           single-use nonce claim (Durable Object)
+                                           optional single-use claim (off by default)
         ◀── 403 (empty) ─────────────────   any failure
         ◀── {gpt, networkCode, slots, targeting} (no-store)
 ads.js: load GPT, define slots on [data-ad-slot], set targeting, display
@@ -33,9 +33,15 @@ ads.js: load GPT, define slots on [data-ad-slot], set targeting, display
   URL, ad unit path or slot logic (asserted by `tests/ads-sdk.test.ts`).
 - `ads.js` (`src/sdk/ads.ts`) is a separate bundle. It waits for `window.__THEBES_IVT_INIT__`
   (or the `thebes:ivt-init` event if it loads first) within one deadline (`data-timeout-ms`,
-  default 8000, clamped 50–20000). It redeems the pass once, removes it from the shared admission
-  result, and validates the response (exact GPT URL, slot paths under the network code). Any
-  error, timeout or missing placeholder → no GPT request. No fallback, no cache, no retry.
+  default 8000, clamped 50–20000). It takes the pass off the shared admission result (only the
+  loader holds it), redeems it, and validates the response (exact GPT URL, slot paths under the
+  network code). Any error or timeout → no GPT request. No fallback, no cache.
+- The pass gates only the **config fetch**. Once GPT has the slots, GPT refresh/lazy-load keeps
+  working for as long as the visitor stays; the pass is not checked again for those.
+- Placeholders added later (SPA navigation, infinite scroll) are picked up by a
+  `MutationObserver`: the loader redeems the **same pass** again, so the server re-checks expiry,
+  binding, kill switches and config each time. A refusal fills nothing and stops watching
+  (max 20 refetches per page). Every full page load runs `ivt.js` again and gets a fresh pass.
 - The GPT URL is a server constant; the KV config cannot change which script loads.
 
 ## 2. Modes (`AD_PASS_MODE`)
@@ -67,7 +73,7 @@ revenue by `ivt_e`; switch to `enforce` to actually gate.
 | `sid` | IVT session id |
 | `site`, `sk` | `sites.id`, site key |
 | `o` | exact origin (`https://www.x` ≠ `https://x`) |
-| `iat`, `exp` | unix seconds; `exp - iat` = `AD_PASS_TTL_SECONDS` (default 60, clamped 15–300) |
+| `iat`, `exp` | unix seconds; `exp - iat` = `AD_PASS_TTL_SECONDS` (default 1800 = 30 min, clamped 15–3600) |
 | `n` | 128-bit random nonce (single-use key, `ivt_t` source) |
 | `pv` | `AD_PASS_POLICY_VERSION`; bump it to invalidate every outstanding pass |
 | `aff` | affiliate id from the site config (null if none) |
@@ -76,15 +82,23 @@ revenue by `ivt_e`; switch to `enforce` to actually gate.
 
 The pass contains no raw IP/UA and no ad information.
 
-## 4. Single use
+## 4. Lifetime and reuse
 
-`AD_PASS_SINGLE_USE` (default `on`): `/v1/ad-units` claims `adpass:<nonce>` in the existing
+Default: **30 minute pass, reusable, fully stateless** (no D1, no KV writes, no Durable Object).
+
+Why 30 minutes: the goal is "no ads without `ivt.js`", not one-time tickets. The pass must outlive
+long sessions in single-page apps / infinite scroll, where new slots need config again. 30 minutes
+matches the usual analytics session length. Longer (up to 60, the clamp) keeps a session
+monetised longer after telemetry might have flagged it, and gives a harvested pass more time on the
+same network + browser.
+
+Reuse is limited to the same origin, IP prefix and User-Agent, and every redemption re-checks
+kill switches and config, so flipping a switch stops new ad loads immediately regardless of TTL.
+
+`AD_PASS_SINGLE_USE=on` (optional): `/v1/ad-units` claims `adpass:<nonce>` in the existing
 `ReplayGuard` Durable Object (`POST /claim`; first claim wins, storage wiped by an alarm at
-`exp + 60s`). Nothing is written at admission and there is no D1 table.
-
-`off` = purely stateless. Trade-off: a pass can then be replayed until it expires, but only from
-the same IP prefix and User-Agent and the same origin. Cost of `on`: one DO round trip per
-pageview with ads. If the DO is unreachable the request is denied.
+`exp + 60s`). Costs one DO round trip per redemption, denies if the DO is unreachable, and means
+late placeholders get no ads (the second redemption is refused).
 
 ## 5. KV keys (`IVT_CONFIG`)
 
@@ -148,8 +162,8 @@ key; rotate `AD_PASS_SECRET` at UTC midnight, or check both keys for the rotatio
 | `AD_PASS_SECRET_PREVIOUS` | secret | previous key during rotation (optional) |
 | `AD_PASS_PREVIOUS_KID` | var | its kid (optional) |
 | `AD_PASS_MODE` | var | `off` / `observe` / `enforce` |
-| `AD_PASS_TTL_SECONDS` | var | default 60 |
-| `AD_PASS_SINGLE_USE` | var | `on` (default) / `off` |
+| `AD_PASS_TTL_SECONDS` | var | default 1800 (30 min), clamped 15–3600 |
+| `AD_PASS_SINGLE_USE` | var | `off` (default) / `on` |
 | `AD_PASS_POLICY_VERSION` | var | default `1` |
 
 ```bash
@@ -157,7 +171,7 @@ openssl rand -base64 48 | npx wrangler secret put AD_PASS_SECRET
 ```
 
 Rotation: set `AD_PASS_SECRET_PREVIOUS` = old secret, `AD_PASS_PREVIOUS_KID` = old kid, new
-`AD_PASS_SECRET` + new `AD_PASS_KID`; after one TTL (60s) remove the previous pair.
+`AD_PASS_SECRET` + new `AD_PASS_KID`; after one TTL (30 min) remove the previous pair.
 
 ## 8. Threat model
 
@@ -168,7 +182,7 @@ Rotation: set `AD_PASS_SECRET_PREVIOUS` = old secret, `AD_PASS_PREVIOUS_KID` = o
 | Expired pass, retired key, policy bump | 403 |
 | Pass from site A used on site B or another origin | origin mismatch → 403 |
 | Pass harvested by a bot farm and replayed elsewhere | IP prefix / UA binding → 403 |
-| Same pass reused | DO claim → 403 (when single use is on) |
+| Same pass reused by the same visitor | allowed within TTL (by design); 403 with `AD_PASS_SINGLE_USE=on` |
 | Kill switch or config change after admission | re-checked at redemption → 403 |
 | KV/DO outage | deny |
 | Config tampering in KV pointing to a foreign script | GPT URL is a server constant; config schema is strict |
@@ -194,3 +208,11 @@ gets no ads for that pageview.
 5. Set `AD_PASS_MODE=enforce` once the eligibility policy is trusted. Roll site by site
    (sites without config get no ads, so onboard config before moving a site's tags).
 6. Practise the kill switches (`ads:site:*`, `ads:global`).
+
+## 10. Demo page
+
+`npm run build:demo` writes `.wrangler/demo/ad-pass-demo.html`: one self-contained page that runs
+the real Worker and SDK code in the browser (in-memory KV/D1/DO, demo keys, GPT stubbed, no real
+ad requests). It covers each visitor scenario, the mode switch, kill switches, config states and
+late (infinite-scroll) slots. Serve it over `http://*.localhost` or HTTPS: Web Crypto needs a
+secure context. The output is never written to `public/`, so it cannot ship with the Worker.

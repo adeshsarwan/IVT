@@ -9,7 +9,8 @@
     "build:sdk": "node scripts/build-sdk.mjs",
     "build": "npm run check && npm run build:sdk",
     "dev": "npm run build:sdk && wrangler dev",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "build:demo": "node demo/build.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260910.1",

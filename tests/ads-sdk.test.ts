@@ -30,9 +30,15 @@ function page(opts: { admission?: 'none' | 'reject' | 'hang' | object; adUnits?:
     window.__THEBES_IVT_INIT__.catch(() => {});
   }
   const calls = { adUnits: 0, adUnitsBody: null as any, gptScripts: 0, other: [] as string[] };
-  const elements = (opts.placeholders ?? ['top', 'side']).map((name) => ({ id: '', getAttribute: (a: string) => a === 'data-ad-slot' ? name : null }));
+  const makeEl = (name: string) => {
+    const attrs: Record<string, string> = { 'data-ad-slot': name };
+    return { id: '', getAttribute: (a: string) => attrs[a] ?? null, setAttribute: (a: string, v: string) => { attrs[a] = v; } };
+  };
+  const elements = (opts.placeholders ?? ['top', 'side']).map(makeEl);
+  const observers: Array<() => void> = [];
   const context: any = {
-    window, setTimeout, clearTimeout, AbortController, URL, URLSearchParams, Intl, performance, crypto, clearInterval: () => {},
+    window, setTimeout,
+    MutationObserver: class { constructor(private cb: () => void) {} observe() { observers.push(this.cb); } disconnect() { const i = observers.indexOf(this.cb); if (i >= 0) observers.splice(i, 1); } }, clearTimeout, AbortController, URL, URLSearchParams, Intl, performance, crypto, clearInterval: () => {},
     CustomEvent: class { constructor(public type: string) {} },
     navigator: { userAgent: 'Test', language: 'en', languages: ['en'], cookieEnabled: true },
     location: { href: 'https://gamewhame.com/', search: '' },
@@ -40,8 +46,10 @@ function page(opts: { admission?: 'none' | 'reject' | 'hang' | object; adUnits?:
     document: {
       currentScript: { src: 'https://ivt.thebesads.com/v1/ads.js', dataset: { timeoutMs: opts.timeoutMs ?? '200' } },
       referrer: '', visibilityState: 'visible', hasFocus: () => true, addEventListener: () => {}, removeEventListener: () => {},
+      body: {},
       querySelectorAll: () => elements,
       createElement: () => ({}),
+      querySelector: (sel: string) => (sel.includes(GPT) && calls.gptScripts > 0 ? {} : null),
       head: { appendChild: (s: any) => { if (s.src === GPT) calls.gptScripts++; else { calls.other.push(s.src); s.onload?.(); } } },
     },
     fetch: async (url: string, init: any) => {
@@ -61,7 +69,7 @@ function page(opts: { admission?: 'none' | 'reject' | 'hang' | object; adUnits?:
       return { ok: true, json: async () => (reply === 'ok' ? units : reply) };
     },
   };
-  return { context, window, calls, elements };
+  return { context, window, calls, elements, makeEl, observers, setReply: (r: AdUnitsReply) => { opts.adUnits = r; } };
 }
 const run = async (p: ReturnType<typeof page>) => { runInNewContext(adsJs, p.context); return p.window.__THEBES_ADS_INIT__ as Promise<boolean>; };
 
@@ -76,20 +84,61 @@ it('ads.js: valid pass -> one ad-units call, GPT loaded, slots + targeting defin
   const defined: any[] = [];
   const targeting: Record<string, unknown> = {};
   const displayed: string[] = [];
-  const pubads = { setTargeting: (k: string, v: unknown) => { targeting[k] = v; }, enableSingleRequest: () => {} };
+  const pubads = { setTargeting: (k: string, v: unknown) => { targeting[k] = v; } };
   Object.assign(p.window.googletag, {
     pubads: () => pubads, enableServices: () => {}, display: (id: string) => displayed.push(id),
     defineSlot: (path: string, sizes: unknown, id: string) => { defined.push([path, sizes, id]); return { addService: () => {} }; },
   });
   p.window.googletag.cmd.forEach((f: () => void) => f());
   assert.deepEqual(defined.map(d => d[0]), ['/1234567/aff_42/top', '/1234567/aff_42/side']);
-  assert.deepEqual(displayed, ['thebes-ad-top', 'thebes-ad-side']);
+  assert.deepEqual(displayed, ['thebes-ad-top-1', 'thebes-ad-side-2']);
   assert.equal(targeting.ivt_k, 'abcdef0123');
   assert.equal(targeting.aff, '42');
   // Running the loader again on the same page does not redeem again.
   runInNewContext(adsJs, p.context);
   await p.window.__THEBES_ADS_INIT__;
   assert.equal(p.calls.adUnits, 1);
+});
+
+const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
+function stubGpt(p: ReturnType<typeof page>) {
+  const defined: string[] = [];
+  Object.assign(p.window.googletag, {
+    pubads: () => ({ setTargeting: () => {} }), enableServices: () => {}, display: () => {},
+    defineSlot: (path: string, _s: unknown, id: string) => { defined.push(id); return { addService: () => {} }; },
+  });
+  return defined;
+}
+
+it('ads.js: placeholders added later (SPA / infinite scroll) reuse the pass; GPT loaded once', async () => {
+  const p = page({ admission: { adPass: 'p' } });
+  assert.equal(await run(p), true);
+  const defined = stubGpt(p);
+  p.elements.push(p.makeEl('top'), p.makeEl('unknown'));
+  p.observers.forEach((cb) => cb());
+  await tick(400);
+  assert.equal(p.calls.adUnits, 2, 'server re-checks the pass for new slots');
+  assert.equal(p.calls.adUnitsBody.adPass, 'p');
+  assert.equal(p.calls.gptScripts, 1);
+  p.window.googletag.cmd.forEach((f: () => void) => f());
+  assert.deepEqual(defined, ['thebes-ad-top-1', 'thebes-ad-side-2', 'thebes-ad-top-3']);
+  // No pending placeholders -> mutations cause no extra calls.
+  p.observers.forEach((cb) => cb());
+  await tick(400);
+  assert.equal(p.calls.adUnits, 2);
+});
+
+it('ads.js: later refusal (expired pass / kill switch) fills nothing and stops watching', async () => {
+  const p = page({ admission: { adPass: 'p' } });
+  assert.equal(await run(p), true);
+  const cmds = p.window.googletag.cmd.length;
+  p.setReply('403');
+  p.elements.push(p.makeEl('top'));
+  p.observers.forEach((cb) => cb());
+  await tick(400);
+  assert.equal(p.calls.adUnits, 2);
+  assert.equal(p.window.googletag.cmd.length, cmds);
+  assert.equal(p.observers.length, 0);
 });
 
 for (const [label, opts, adUnitsCalls] of [

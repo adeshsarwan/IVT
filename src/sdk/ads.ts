@@ -7,6 +7,8 @@
 
 const GPT_URL = "https://securepubads.g.doubleclick.net/tag/js/gpt.js";
 const DEFAULT_TIMEOUT_MS = 8000;
+const REFETCH_DEBOUNCE_MS = 250;
+const MAX_REFETCHES = 20;
 
 type AdsOptions = { endpoint: string; timeoutMs?: number };
 type Slot = { div: string; path: string; sizes: Array<[number, number]> };
@@ -63,22 +65,10 @@ function parseAdUnits(input: any): AdUnits | null {
   return { slots, targeting };
 }
 
-async function run(w: AdsWindow, options: AdsOptions): Promise<boolean> {
-  const endpoint = options.endpoint.replace(/\/$/, "");
-  const timeoutMs = Math.max(50, Math.min(20000, options.timeoutMs ?? DEFAULT_TIMEOUT_MS));
-  const startedAt = Date.now();
-  const remaining = () => timeoutMs - (Date.now() - startedAt);
-
-  const admission = await deadline(admissionPromise(w), timeoutMs);
-  const adPass = admission?.adPass;
-  if (typeof adPass !== "string" || !adPass) return false;
-  delete admission.adPass; // single use: nobody else on the page gets to redeem it.
-
-  const left = remaining();
-  if (left <= 0) return false;
+async function fetchUnits(endpoint: string, adPass: string, timeoutMs: number): Promise<AdUnits | null> {
+  if (timeoutMs <= 0) return null;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), left);
-  let units: AdUnits | null;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`${endpoint}/v1/ad-units`, {
       method: "POST",
@@ -89,46 +79,104 @@ async function run(w: AdsWindow, options: AdsOptions): Promise<boolean> {
       body: JSON.stringify({ adPass }),
       signal: controller.signal,
     });
-    if (!response.ok) return false;
-    units = parseAdUnits(await response.json());
+    if (!response.ok) return null;
+    return parseAdUnits(await response.json());
+  } catch {
+    return null;
   } finally {
     clearTimeout(timer);
   }
-  if (!units || remaining() <= 0) return false;
+}
 
-  const placeholders = new Map<string, Element>();
+// Placeholders not yet handed to GPT.
+function pendingPlaceholders(): Element[] {
+  const out: Element[] = [];
   document.querySelectorAll("[data-ad-slot]").forEach((el) => {
-    const name = el.getAttribute("data-ad-slot");
-    if (name && !placeholders.has(name)) placeholders.set(name, el);
+    if (!el.getAttribute("data-ad-filled")) out.push(el);
   });
-  const matched = units.slots.filter((s) => placeholders.has(s.div));
-  if (!matched.length) return false;
-  const ids = matched.map((s) => {
-    const el = placeholders.get(s.div)!;
-    if (!el.id) el.id = `thebes-ad-${s.div}`;
-    return el.id;
-  });
+  return out;
+}
+
+let slotSeq = 0;
+
+// Defines and displays GPT slots for matching placeholders. Returns how many were filled.
+function fill(w: AdsWindow, units: AdUnits, elements: Element[]): number {
+  const bySlot = new Map(units.slots.map((s) => [s.div, s] as const));
+  const jobs: Array<{ slot: Slot; id: string }> = [];
+  for (const el of elements) {
+    const slot = bySlot.get(el.getAttribute("data-ad-slot") || "");
+    if (!slot) { el.setAttribute("data-ad-filled", "none"); continue; } // unknown name: don't refetch for it
+    el.setAttribute("data-ad-filled", "1");
+    if (!el.id) el.id = `thebes-ad-${slot.div}-${++slotSeq}`;
+    jobs.push({ slot, id: el.id });
+  }
+  if (!jobs.length) return 0;
 
   const targeting = units.targeting;
+  // GPT is requested once per document; the DOM is the source of truth.
+  const needScript = !document.querySelector(`script[src="${GPT_URL}"]`);
   const googletag: Googletag = (w.googletag = w.googletag || { cmd: [] });
   googletag.cmd.push(() => {
     const pubads = googletag.pubads();
-    matched.forEach((s, i) => {
-      const slot = googletag.defineSlot(s.path, s.sizes, ids[i]);
-      if (slot) slot.addService(pubads);
-    });
     for (const [k, v] of Object.entries(targeting)) pubads.setTargeting(k, v);
-    pubads.enableSingleRequest();
-    googletag.enableServices();
-    ids.forEach((id) => googletag.display(id));
+    for (const job of jobs) {
+      const slot = googletag.defineSlot(job.slot.path, job.slot.sizes, job.id);
+      if (slot) slot.addService(pubads);
+    }
+    googletag.enableServices(); // idempotent in GPT
+    for (const job of jobs) googletag.display(job.id);
   });
 
-  const script = document.createElement("script");
-  script.src = GPT_URL;
-  script.async = true;
-  script.crossOrigin = "anonymous";
-  (document.head || document.documentElement).appendChild(script);
-  return true;
+  if (needScript) {
+    const script = document.createElement("script");
+    script.src = GPT_URL;
+    script.async = true;
+    script.crossOrigin = "anonymous";
+    (document.head || document.documentElement).appendChild(script);
+  }
+  return jobs.length;
+}
+
+// Later placeholders (SPA navigation, infinite scroll) re-redeem the same pass, so the server
+// re-checks expiry, binding, kill switches and config every time. Any refusal stops watching.
+function watchForNewPlaceholders(w: AdsWindow, endpoint: string, adPass: string, timeoutMs: number) {
+  if (typeof MutationObserver !== "function" || !document.body) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let busy = false;
+  let refetches = 0;
+  const observer = new MutationObserver(() => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(async () => {
+      if (busy || !pendingPlaceholders().length) return;
+      if (++refetches > MAX_REFETCHES) { observer.disconnect(); return; }
+      busy = true;
+      try {
+        const units = await fetchUnits(endpoint, adPass, timeoutMs);
+        if (!units) { observer.disconnect(); return; }
+        fill(w, units, pendingPlaceholders());
+      } finally {
+        busy = false;
+      }
+    }, REFETCH_DEBOUNCE_MS);
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
+async function run(w: AdsWindow, options: AdsOptions): Promise<boolean> {
+  const endpoint = options.endpoint.replace(/\/$/, "");
+  const timeoutMs = Math.max(50, Math.min(20000, options.timeoutMs ?? DEFAULT_TIMEOUT_MS));
+  const startedAt = Date.now();
+
+  const admission = await deadline(admissionPromise(w), timeoutMs);
+  const adPass = admission?.adPass;
+  if (typeof adPass !== "string" || !adPass) return false;
+  delete admission.adPass; // only this loader holds the pass from here on.
+
+  const units = await fetchUnits(endpoint, adPass, timeoutMs - (Date.now() - startedAt));
+  if (!units || Date.now() - startedAt > timeoutMs) return false;
+  const filled = fill(w, units, pendingPlaceholders());
+  watchForNewPlaceholders(w, endpoint, adPass, timeoutMs);
+  return filled > 0;
 }
 
 export function initAds(options: AdsOptions): Promise<boolean> {

@@ -11,6 +11,8 @@ const TOKEN_VERSION = 1;
 const TOKEN_KIND = "adpass";
 const MAX_TOKEN_LENGTH = 2048;
 const CLOCK_SKEW_SECONDS = 5;
+const DEFAULT_TTL_SECONDS = 1800;
+const MAX_TTL_SECONDS = 3600;
 const KID_RE = /^[A-Za-z0-9_-]{1,16}$/;
 const NONCE_RE = /^[A-Za-z0-9_-]{22}$/;
 const BIND_RE = /^[A-Za-z0-9_-]{22}$/;
@@ -89,11 +91,13 @@ export function adPassMode(env: AdPassEnv): AdPassMode {
   return v === "observe" || v === "enforce" ? v : "off";
 }
 export function adPassTtlSeconds(env: AdPassEnv): number {
-  const n = Number(env.AD_PASS_TTL_SECONDS || "60");
-  return Number.isFinite(n) ? Math.max(15, Math.min(300, Math.floor(n))) : 60;
+  const n = Number(env.AD_PASS_TTL_SECONDS || String(DEFAULT_TTL_SECONDS));
+  return Number.isFinite(n) ? Math.max(15, Math.min(MAX_TTL_SECONDS, Math.floor(n))) : DEFAULT_TTL_SECONDS;
 }
 function singleUse(env: AdPassEnv): boolean {
-  return (env.AD_PASS_SINGLE_USE || "on").trim().toLowerCase() !== "off";
+  // Default off: the pass is reusable for its lifetime (same origin + IP prefix + UA) so the
+  // loader can fetch config again for placeholders added later (SPA, infinite scroll).
+  return (env.AD_PASS_SINGLE_USE || "off").trim().toLowerCase() === "on";
 }
 function policyVersion(env: AdPassEnv): string {
   return (env.AD_PASS_POLICY_VERSION || "1").trim() || "1";
@@ -202,7 +206,7 @@ export async function verifyAdPass(env: AdPassEnv, token: unknown, origin: strin
   const now = Math.floor(nowMs / 1000);
   if (claims.pv !== policyVersion(env)) return null;
   if (claims.iat > now + CLOCK_SKEW_SECONDS || now >= claims.exp) return null;
-  if (claims.exp - claims.iat > 300) return null;
+  if (claims.exp - claims.iat > MAX_TTL_SECONDS) return null;
   if (claims.o !== origin) return null;
   const binding = requestBinding(request);
   if (!binding) return null;

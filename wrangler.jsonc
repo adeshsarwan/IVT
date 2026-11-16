@@ -55,8 +55,8 @@
     "NETWORK_CACHE_TTL_SECONDS": "86400",
     "NETWORK_ERROR_TTL_SECONDS": "600",
     "AD_PASS_MODE": "off",
-    "AD_PASS_TTL_SECONDS": "60",
-    "AD_PASS_SINGLE_USE": "on",
+    "AD_PASS_TTL_SECONDS": "1800",
+    "AD_PASS_SINGLE_USE": "off",
     "AD_PASS_KID": "k1",
     "AD_PASS_POLICY_VERSION": "1"
   }
