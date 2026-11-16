@@ -1,8 +1,9 @@
 import { getNetworkIntel, observeOnlyNetworkRisk } from "./network";
 import { evaluateIdentityRisk } from "./identity";
 import { monetizationEligibility } from "./eligibility";
+import { type AdPassEnv, handleAdUnits, maybeIssueAdPass } from "./adpass";
 
-export interface Env {
+export interface Env extends AdPassEnv {
   DB: D1Database;
   IVT_CONFIG: KVNamespace;
   REPLAY_GUARD: DurableObjectNamespace;
@@ -385,7 +386,17 @@ export default {
       await guard.fetch("https://replay-guard/register", { method: "POST", body: JSON.stringify({ sessionId, origin, expiresAt: now + ttl * 1000 }) });
 
       const telemetryToken = await issueTelemetryToken(env, sessionId, origin);
-      return json({ status: "ADMITTED", monetization: { eligible: monetizationEligibility(classification, decision) }, runtime: `/v1/runtime/${capability}`, telemetryToken, expiresIn: ttl }, 200, origin);
+      const eligible = monetizationEligibility(classification, decision);
+      // Ad Pass: shadow IVT mode uses the would-be decision (WOULD_PASS); enforce IVT mode uses PASS.
+      // AD_PASS_MODE (off|observe|enforce) decides whether that eligibility gates the pass. See docs/AD_PASS.md.
+      const adPass = await maybeIssueAdPass(env, {
+        request, sessionId, siteId: site.id, siteKey: body.siteKey, origin,
+        eligible: eligible || (classification === "CLEAN" && decision === "PASS"),
+      });
+      return json({
+        status: "ADMITTED", monetization: { eligible }, runtime: `/v1/runtime/${capability}`, telemetryToken, expiresIn: ttl,
+        ...(adPass ? { adPass } : {}),
+      }, 200, origin);
     }
 
     if (url.pathname === "/v2/telemetry" && request.method === "POST") {
@@ -431,6 +442,10 @@ export default {
       return json({ ok: true }, 200, origin);
     }
 
+    if (url.pathname === "/v1/ad-units" && request.method === "POST") {
+      return handleAdUnits(request, env, configuredOrigin(request, env));
+    }
+
     if (url.pathname.startsWith("/v1/runtime/") && request.method === "GET") {
       const origin = runtimeRequestOrigin(request, env);
       if (!origin) return new Response("", { status: 403 });
@@ -470,6 +485,18 @@ export class ReplayGuard {
       await this.state.storage.put("capability", { ...cap, consumed:true });
       return new Response("ok");
     }
+    if (url.pathname === "/claim" && request.method === "POST") {
+      // Ad Pass single use: first claim of a nonce wins; storage is wiped by alarm after expiry.
+      const input = await request.json<{ expiresAt:number }>();
+      if (!Number.isFinite(input.expiresAt)) return new Response("invalid", { status:400 });
+      if (await this.state.storage.get("adpass-claimed")) return new Response("used", { status:409 });
+      await this.state.storage.put("adpass-claimed", true);
+      await this.state.storage.setAlarm(input.expiresAt + 60_000);
+      return new Response("ok");
+    }
     return new Response("Not found", { status:404 });
+  }
+  async alarm(): Promise<void> {
+    await this.state.storage.deleteAll();
   }
 }

@@ -14,7 +14,7 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "run_worker_first": ["/v1/admit", "/v1/runtime/*", "/v2/telemetry", "/health"]
+    "run_worker_first": ["/v1/admit", "/v1/ad-units", "/v1/runtime/*", "/v2/telemetry", "/health"]
   },
   "d1_databases": [
     {
@@ -53,6 +53,11 @@
     "IPINFO_MODE": "observe",
     "IPINFO_TIMEOUT_MS": "1500",
     "NETWORK_CACHE_TTL_SECONDS": "86400",
-    "NETWORK_ERROR_TTL_SECONDS": "600"
+    "NETWORK_ERROR_TTL_SECONDS": "600",
+    "AD_PASS_MODE": "off",
+    "AD_PASS_TTL_SECONDS": "60",
+    "AD_PASS_SINGLE_USE": "on",
+    "AD_PASS_KID": "k1",
+    "AD_PASS_POLICY_VERSION": "1"
   }
 }

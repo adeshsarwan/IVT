@@ -12,11 +12,15 @@ type Admission = {
   runtime?: string;
   telemetryToken?: string;
   expiresIn?: number;
+  adPass?: string;
 };
 
 type IVTResult = {
   admitted: boolean;
   monetizationEligible: boolean;
+  // Opaque, short-lived, single-use ticket. ivt.js never interprets it and knows nothing about
+  // what it unlocks; a separate loader exchanges it server-side.
+  adPass?: string;
   stopTelemetry?: () => void;
 };
 
@@ -114,7 +118,8 @@ async function performInit(options: IVTOptions): Promise<IVTResult> {
     throw error;
   }
 
-  return { admitted: true, monetizationEligible: admission.monetization?.eligible === true, stopTelemetry };
+  const adPass = typeof admission.adPass === "string" && admission.adPass.length <= 2048 ? admission.adPass : undefined;
+  return { admitted: true, monetizationEligible: admission.monetization?.eligible === true, ...(adPass ? { adPass } : {}), stopTelemetry };
 }
 
 export function initIVT(options: IVTOptions): Promise<IVTResult> {
@@ -131,6 +136,8 @@ export function initIVT(options: IVTOptions): Promise<IVTResult> {
       delete w.__THEBES_IVT_INIT__;
       throw error;
     });
+    // Lets consumers that loaded earlier pick up the shared admission promise.
+    try { w.dispatchEvent(new CustomEvent("thebes:ivt-init")); } catch { /* non-DOM environments */ }
   }
 
   return w.__THEBES_IVT_INIT__;
