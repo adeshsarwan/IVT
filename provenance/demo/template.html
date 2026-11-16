@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Traffic Provenance Lab</title>
+<style>
+:root{
+  --bg:#fbfaf7; --card:#ffffff; --ink:#1d1d1b; --muted:#5f5e58; --line:#d9d6cc;
+  --accent:#2f5bd3; --ok:#1f8a4c; --bad:#c2412d; --warn:#b7791f; --thr:#c26a1d;
+  --soft:#eef2fb; --softok:#e8f5ee; --softbad:#fbecea; --softwarn:#fbf4e4; --softthr:#fcefe3;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#16171a; --card:#1f2125; --ink:#ecebe6; --muted:#a3a29b; --line:#3a3c42;
+    --accent:#7d9cf0; --ok:#5cc58a; --bad:#ef7b67; --warn:#e2b04f; --thr:#f0995a;
+    --soft:#232a3d; --softok:#1d2f25; --softbad:#3a2320; --softwarn:#3a3120; --softthr:#3a2a1d;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#16171a; --card:#1f2125; --ink:#ecebe6; --muted:#a3a29b; --line:#3a3c42;
+  --accent:#7d9cf0; --ok:#5cc58a; --bad:#ef7b67; --warn:#e2b04f; --thr:#f0995a;
+  --soft:#232a3d; --softok:#1d2f25; --softbad:#3a2320; --softwarn:#3a3120; --softthr:#3a2a1d;
+}
+*{box-sizing:border-box} [hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:1240px;margin:0 auto;padding:24px 16px 80px}
+h1{font-size:26px;margin:0 0 4px} h3{font-size:17px;margin:26px 0 8px} h4{margin:0 0 6px;font-size:14px}
+.sub{color:var(--muted);margin:0 0 18px;max-width:900px}
+.muted{color:var(--muted)} .small{font-size:13px} .bad{color:var(--bad)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:12px 0}
+.row{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end}
+label{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+input,select,textarea,button{font:inherit;color:var(--ink)}
+input,select{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 8px;min-width:90px}
+textarea{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+button{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.presets{display:flex;flex-wrap:wrap;gap:8px}
+.preset.on{background:var(--soft);border-color:var(--accent);color:var(--accent);font-weight:600}
+.err{color:var(--bad);font-size:13px}
+code{background:var(--soft);padding:1px 5px;border-radius:4px;font-size:.88em}
+.pill{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.03em;padding:2px 8px;border-radius:99px;background:var(--soft);color:var(--accent);white-space:nowrap}
+.pill.ok{background:var(--softok);color:var(--ok)} .pill.watch{background:var(--softwarn);color:var(--warn)}
+.pill.thr{background:var(--softthr);color:var(--thr)} .pill.block{background:var(--softbad);color:var(--bad)}
+.affs{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.aff{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--line);border-radius:12px;padding:12px 14px}
+.aff.ok{border-left-color:var(--ok)} .aff.watch{border-left-color:var(--warn)} .aff.thr{border-left-color:var(--thr)} .aff.block{border-left-color:var(--bad)}
+.aff-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px} .aff-id{font-weight:700;font-size:16px}
+.actions{margin:8px 0 0;padding-left:18px} .actions li{margin:3px 0;font-size:13px}
+.note{border-left:3px solid var(--warn);padding:4px 8px;margin-top:6px}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%}
+.wins th,.wins td{border-bottom:1px solid var(--line);padding:7px 8px;text-align:left;vertical-align:top;font-size:13.5px}
+.wins th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+.wrow{cursor:pointer} .wrow:hover td{background:var(--soft)} .wrow.open td{background:var(--soft)}
+.num{text-align:right;white-space:nowrap}
+.st{font-size:11.5px;font-weight:700;padding:2px 6px;border-radius:6px;border:1px solid var(--line);white-space:nowrap}
+.st-VERDICT{color:var(--ink)} .st-PROVISIONAL,.st-UNKNOWN{color:var(--warn);border-color:var(--warn)} .st-NO_ACCESS{color:var(--thr);border-color:var(--thr)}
+.st-NO_VERDICT,.st-OPEN{color:var(--muted);border-style:dashed}
+.ci{position:relative;display:inline-block;width:110px;height:10px;background:var(--bg);border:1px solid var(--line);border-radius:5px;vertical-align:middle}
+.ci-band{position:absolute;top:1px;bottom:1px;background:var(--accent);opacity:.35;border-radius:3px}
+.ci-pt{position:absolute;top:-2px;width:2px;height:12px;background:var(--accent);transform:translateX(-1px)}
+.mark{position:absolute;top:-3px;width:1px;height:14px;background:var(--muted);opacity:.6}
+code.sev1{color:var(--warn)} code.sev2{color:var(--thr)} code.sev3{color:var(--bad)}
+.det{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:18px;padding:6px 2px}
+@media (max-width:820px){.det{grid-template-columns:1fr}}
+.reasons{margin:0;padding-left:16px} .reasons li{margin:5px 0;font-size:13px}
+.mini .ci{width:70px} .wins td:nth-child(2){white-space:nowrap}
+.mini td{border-bottom:1px solid var(--line);padding:4px 6px;font-size:12.5px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;color:var(--muted)}
+.meta-line{margin:8px 0}
+details summary{cursor:pointer;color:var(--accent);font-size:14px}
+</style>
+</head>
+<body>
+<main>
+<h1>Traffic Provenance Lab</h1>
+<p class="sub">Runs the real <code>provenance/src</code> logic in your browser. Nothing leaves this page. Pick a scenario, change N or thresholds, and see each window's stats, Wilson confidence interval, verdict, breaker tier and the Ad Pass kill-switch plan.</p>
+
+<div class="card">
+  <h4>1 · Preset scenarios</h4>
+  <div class="presets" id="presets"></div>
+  <p style="margin:10px 0 2px"><b id="fx-title"></b></p>
+  <p class="small muted" id="fx-expect" style="margin:0"></p>
+  <p class="small" id="fx-summary" style="margin:6px 0 0"></p>
+</div>
+
+<div class="card">
+  <h4>2 · Settings</h4>
+  <div class="row">
+    <label>Window size N
+      <select id="win-size"><option value="5000" selected>5,000</option><option value="10000">10,000</option><option value="1000">1,000</option><option value="custom">custom…</option></select>
+    </label>
+    <label hidden id="win-custom-wrap">custom N<input id="win-custom" type="number" value="2500" min="1"></label>
+    <label>…or every T hours<input id="win-hours" type="number" value="24" min="1"></label>
+    <label>Sample rate <span id="sample-out">100%</span><input id="sample-rate" type="range" min="5" max="100" step="5" value="100"></label>
+    <label>Min sample per rate<input id="min-sample" type="number" value="200" min="1"></label>
+    <label>Min requests per window<input id="min-window" type="number" value="300" min="1"></label>
+    <button class="primary" id="run">Run</button>
+  </div>
+  <details style="margin-top:12px">
+    <summary>Config overrides (JSON: routes, thresholds, breaker …)</summary>
+    <p class="small muted">Deep-merged over the defaults. The fields above override <code>windowSize</code>, <code>windowMaxMs</code>, <code>sampleRate</code>, <code>minSample</code>, <code>minWindowRequests</code>.</p>
+    <textarea id="cfg-json" rows="10" spellcheck="false"></textarea>
+    <div class="row" style="margin-top:6px"><button id="defaults">Show full config with defaults</button><span class="err" id="cfg-err"></span></div>
+  </details>
+</div>
+
+<div class="card">
+  <h4>3 · Fixture data</h4>
+  <div class="row">
+    <button id="edit">View / edit fixture JSON</button>
+    <button id="download">Download fixture</button>
+    <label>Load fixture file (.json)<input id="file" type="file" accept="application/json,.json"></label>
+  </div>
+  <p class="small muted">Shape: <code>{ input: { requests: RawRequest[], platform: { [aff]: { google?: { clicks: ClickStats rows… }, meta?: { insights: Insights rows… } } }, now }, config }</code>. See <code>provenance/README.md</code>.</p>
+  <div id="fx-editor" hidden>
+    <p class="small muted">Size: <span id="fx-size"></span>. Large fixtures are slow to edit in a textarea; for big edits, download, edit in an editor, and load the file.</p>
+    <textarea id="fx-json" rows="18" spellcheck="false"></textarea>
+    <div class="row" style="margin-top:6px"><button class="primary" id="apply">Apply &amp; run</button><button id="cancel">Close</button><span class="err" id="fx-err"></span></div>
+  </div>
+</div>
+
+<div class="legend">
+  <span><span class="pill ok">OK</span> no action</span>
+  <span><span class="pill watch">WATCH</span> alert + review</span>
+  <span><span class="pill thr">THROTTLE</span> reduced ads (proposed key)</span>
+  <span><span class="pill block">BLOCK</span> <code>ads:aff:&lt;id&gt; = off</code></span>
+  <span>CI bar: band = 95% Wilson interval, tick = point, grey marks = 75 / 90 / 95% thresholds</span>
+</div>
+
+<div id="results"></div>
+</main>
+<script>
+/*__BUNDLE__*/
+</script>
+</body>
+</html>
