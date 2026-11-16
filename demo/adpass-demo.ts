@@ -158,6 +158,11 @@ function decodePass(pass: string): Array<[string, string]> {
 
 // ---------- route Worker traffic in-page ----------
 
+// The demo reuses one document for many simulated page loads. A real reload gives each page a
+// fresh document, so a previous page's pass can never reach the next page. Mirror that here:
+// only the pass issued during the current simulated load may be redeemed.
+let currentPass: string | null = null;
+
 const realFetch = window.fetch.bind(window);
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -165,6 +170,11 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const path = new URL(url).pathname;
   if (path === "/v2/telemetry") return new Response('{"ok":true}', { headers: { "content-type": "application/json" } });
   const isAdUnits = path === "/v1/ad-units";
+  if (isAdUnits) {
+    let sent: unknown;
+    try { sent = JSON.parse(typeof init?.body === "string" ? init.body : "{}").adPass; } catch { sent = undefined; }
+    if (!currentPass || sent !== currentPass) return new Response(null, { status: 403 }); // left over from a previous simulated page
+  }
   const actor = isAdUnits ? "ads.js → server" : "ivt.js → server";
 
   if (state.scenario === "down") {
@@ -206,6 +216,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       data.adPass = `${kid}.${forged}.${sig}`;
       response = new Response(JSON.stringify(data), { status: response.status, headers: response.headers });
     }
+    currentPass = typeof data.adPass === "string" ? data.adPass : null;
     if (data.adPass) {
       log(actor, `POST /v1/admit · ${response.status} · Ad Pass issued`, "pass", decodePass(data.adPass));
       if (state.scenario === "tampered") log("browser", "Pass edited: expiry pushed one year out, old signature kept", "warn");
@@ -310,6 +321,7 @@ function resetPage() {
   delete w.googletag;
   document.querySelectorAll(`script[src="${GPT_URL}"]`).forEach((el) => el.remove());
   guards.clear();
+  currentPass = null;
   extraSlots = 0;
   $("#log").innerHTML = "";
   for (const el of document.querySelectorAll("#site [data-ad-slot]")) {
