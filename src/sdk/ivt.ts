@@ -64,7 +64,26 @@ function attributionEvidence() {
     const value = p.get(key);
     if (value) out[key] = value.slice(0, 512);
   }
+  const aff = affiliateParam(p);
+  if (aff) out.aff = aff;
   return out;
+}
+
+// Affiliate id from ?aff= on the landing page, remembered for this tab so later pages of the
+// same visit keep it. Opaque here: the server validates it against the site's config.
+const AFF_STORAGE_KEY = "thebes:aff";
+function affiliateParam(params: URLSearchParams): string | null {
+  const fromUrl = params.get("aff");
+  if (fromUrl && /^[A-Za-z0-9_-]{1,32}$/.test(fromUrl)) {
+    try { sessionStorage.setItem(AFF_STORAGE_KEY, fromUrl); } catch { /* storage unavailable */ }
+    return fromUrl;
+  }
+  try {
+    const stored = sessionStorage.getItem(AFF_STORAGE_KEY);
+    return stored && /^[A-Za-z0-9_-]{1,32}$/.test(stored) ? stored : null;
+  } catch {
+    return null;
+  }
 }
 
 async function loadRuntime(endpoint: string, runtime: string): Promise<void> {

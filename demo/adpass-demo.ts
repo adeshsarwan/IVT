@@ -28,20 +28,23 @@ const SCENARIOS: Record<Scenario, { label: string; what: string }> = {
 const state = {
   scenario: "real" as Scenario,
   mode: "enforce",
-  kill: { global: false, site: false, aff: false },
-  config: "ok" as "ok" | "missing" | "broken",
+  kill: { global: false, site: false, aff42: false, aff77: false },
+  config: "ok" as "ok" | "house" | "missing" | "broken",
+  aff: "42" as string, // "" = no ?aff= in the URL
 };
 
-const adConfig = {
-  v: 1,
-  networkCode: "1234567",
-  affiliate: "42",
+const unitSet = (aff: string) => ({
   slots: [
-    { div: "top", path: "/1234567/aff_42/gamewhame_top", sizes: [[300, 250], [336, 280]] },
-    { div: "mid", path: "/1234567/aff_42/gamewhame_mid", sizes: [[300, 250]] },
+    { div: "top", path: `/1234567/aff_${aff}/gamewhame_top`, sizes: [[300, 250], [336, 280]] },
+    { div: "mid", path: `/1234567/aff_${aff}/gamewhame_mid`, sizes: [[300, 250]] },
   ],
-  targeting: { aff: "42" },
-};
+});
+const adConfig = (withHouse: boolean) => ({
+  v: 2,
+  networkCode: "1234567",
+  affiliates: { "42": unitSet("42"), "77": unitSet("77") },
+  ...(withHouse ? { house: unitSet("house") } : {}),
+});
 
 // ---------- in-memory Cloudflare bindings ----------
 
@@ -76,11 +79,12 @@ const env = {
     async get(key: string) {
       if (key === "ads:global") return state.kill.global ? "off" : null;
       if (key === `ads:site:${SITE}`) return state.kill.site ? "off" : null;
-      if (key === "ads:aff:42") return state.kill.aff ? "off" : null;
+      if (key === "ads:aff:42") return state.kill.aff42 ? "off" : null;
+      if (key === "ads:aff:77") return state.kill.aff77 ? "off" : null;
       if (key === `adunits:site:${SITE}`) {
         if (state.config === "missing") return null;
         if (state.config === "broken") return '{"v":1,"networkCode":"1234567","slots":[{"div":"top"';
-        return JSON.stringify(adConfig);
+        return JSON.stringify(adConfig(state.config === "house"));
       }
       return null;
     },
@@ -144,7 +148,7 @@ function decodePass(pass: string): Array<[string, string]> {
       ["key id", kid],
       ["site / origin", `${c.sk} · ${c.o}`],
       ["valid for", `${mins} min (until ${new Date(c.exp * 1000).toLocaleTimeString()})`],
-      ["affiliate", String(c.aff)],
+      ["affiliate", c.aff === null ? "none (house units)" : String(c.aff)],
       ["eligible at issue", c.e ? "yes" : "no"],
       ["IP range hash", c.ih],
       ["browser hash", c.uh],
@@ -187,6 +191,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     // The demo itself is hosted elsewhere; report the simulated publisher page instead.
     const parsed = JSON.parse(body);
     parsed.page = { href: `${SITE_ORIGIN}/games/word-sprint`, referrer: "https://www.google.com/" };
+    parsed.attribution = state.aff ? { aff: state.aff } : {};
     if (state.scenario === "bot") parsed.browser = { ...parsed.browser, webdriver: true };
     body = JSON.stringify(parsed);
   }
@@ -223,6 +228,8 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     } else {
       const why = state.mode === "off" ? "AD_PASS_MODE is off"
         : data.monetization?.eligible === false && state.mode === "enforce" ? "visit is not eligible"
+        : state.aff === "999" ? "affiliate 999 is not configured for this site"
+        : !state.aff && state.config !== "house" ? "no ?aff= and the site has no house ad units"
         : "kill switch on or ad config unusable";
       log(actor, `POST /v1/admit · ${response.status} · no Ad Pass`, "deny", [["status", String(data.status)], ["eligible", String(data.monetization?.eligible)], ["reason (server side only)", why]]);
     }
@@ -403,10 +410,14 @@ function renderScenarios() {
 function wireControls() {
   document.querySelectorAll<HTMLInputElement>('input[name="mode"]').forEach((el) =>
     el.addEventListener("change", () => { if (el.checked) state.mode = el.value; }));
-  for (const k of ["global", "site", "aff"] as const) {
+  for (const k of ["global", "site", "aff42", "aff77"] as const) {
     $(`#kill-${k}`).addEventListener("change", (e) => { state.kill[k] = (e.target as HTMLInputElement).checked; });
   }
   $("#config").addEventListener("change", (e) => { state.config = (e.target as HTMLSelectElement).value as typeof state.config; });
+  $("#aff").addEventListener("change", (e) => {
+    state.aff = (e.target as HTMLSelectElement).value;
+    $("#url").textContent = `https://gamewhame.com/games/word-sprint${state.aff ? `?aff=${state.aff}` : ""}`;
+  });
   $("#load").addEventListener("click", () => void loadPage());
   $("#more").addEventListener("click", addSlot);
 }

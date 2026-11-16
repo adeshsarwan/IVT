@@ -120,7 +120,7 @@ button:focus-visible, select:focus-visible, .choice:has(input:focus-visible) { o
 
   <div class="grid">
     <section class="browser" aria-label="Publisher page">
-      <div class="chrome"><span class="dots"><i></i><i></i><i></i></span><span class="url">https://gamewhame.com/games/word-sprint</span></div>
+      <div class="chrome"><span class="dots"><i></i><i></i><i></i></span><span class="url" id="url">https://gamewhame.com/games/word-sprint?aff=42</span></div>
       <div id="site">
         <h2>Word Sprint: today's five-letter puzzle</h2>
         <div class="byline">Gamewhame · 4 min play</div>
@@ -139,6 +139,19 @@ button:focus-visible, select:focus-visible, .choice:has(input:focus-visible) { o
         <div id="scenarios"></div>
       </section>
 
+      <section class="panel" aria-labelledby="h-aff">
+        <h2 id="h-aff">Affiliate link</h2>
+        <div class="field"><span>?aff= in the landing URL</span>
+          <select id="aff" aria-label="Affiliate in the landing URL">
+            <option value="42">aff=42</option>
+            <option value="77">aff=77</option>
+            <option value="">none (organic or direct visit)</option>
+            <option value="999">aff=999 (not set up for this site)</option>
+          </select>
+        </div>
+        <p class="note">Each affiliate gets its own ad units (<code>/1234567/aff_42/…</code>) and its own <code>aff=</code> key-value in GAM. ivt.js remembers the id for later pages in the same tab.</p>
+      </section>
+
       <section class="panel" aria-labelledby="h-server">
         <h2 id="h-server">Server switches</h2>
         <div class="settings">
@@ -152,11 +165,13 @@ button:focus-visible, select:focus-visible, .choice:has(input:focus-visible) { o
           <div class="field"><span>Kill switches (KV)</span>
             <label class="check"><input type="checkbox" id="kill-global">ads:global = off</label>
             <label class="check"><input type="checkbox" id="kill-site">ads:site:gamewhame.com = off</label>
-            <label class="check"><input type="checkbox" id="kill-aff">ads:aff:42 = off</label>
+            <label class="check"><input type="checkbox" id="kill-aff42">ads:aff:42 = off</label>
+            <label class="check"><input type="checkbox" id="kill-aff77">ads:aff:77 = off</label>
           </div>
           <div class="field"><span>Ad config (KV)</span>
             <select id="config" aria-label="Ad config state">
-              <option value="ok">present and valid</option>
+              <option value="ok">affiliates 42 + 77</option>
+              <option value="house">affiliates 42 + 77, plus house units</option>
               <option value="missing">missing</option>
               <option value="broken">malformed JSON</option>
             </select>

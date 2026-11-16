@@ -76,7 +76,7 @@ revenue by `ivt_e`; switch to `enforce` to actually gate.
 | `iat`, `exp` | unix seconds; `exp - iat` = `AD_PASS_TTL_SECONDS` (default 1800 = 30 min, clamped 15–3600) |
 | `n` | 128-bit random nonce (single-use key, `ivt_t` source) |
 | `pv` | `AD_PASS_POLICY_VERSION`; bump it to invalidate every outstanding pass |
-| `aff` | affiliate id from the site config (null if none) |
+| `aff` | affiliate id from `?aff=`, validated against the site config (null = house units) |
 | `e` | 1 = eligible at issuance (always 1 in `enforce`) |
 | `ih`, `uh` | keyed hashes (16 bytes) of the client IP prefix (IPv4 /24, IPv6 /64, from `CF-Connecting-IP`) and the `User-Agent` header |
 
@@ -108,7 +108,7 @@ late placeholders get no ads (the second redemption is refused).
 |---|---|
 | `ads:global` | all ads |
 | `ads:site:<siteKey>` | one site, e.g. `ads:site:gamewhame.com` |
-| `ads:aff:<affiliate>` | one affiliate (the `affiliate` in the site's ad config) |
+| `ads:aff:<affiliate>` | one affiliate, on every site |
 
 Absent or `on` = allowed. **Any other value** (`off`, `0`, …) = disabled. KV read error = disabled.
 Takes effect on the next call (KV propagation: seconds to ~60s).
@@ -120,24 +120,40 @@ npx wrangler kv key delete --binding IVT_CONFIG "ads:site:gamewhame.com" --remot
 
 ### Ad-unit config `adunits:site:<siteKey>`
 
+One document per site. A site can have many affiliates; each gets its own ad units.
+
 ```json
 {
-  "v": 1,
+  "v": 2,
   "networkCode": "1234567",
-  "affiliate": "42",
-  "slots": [
-    { "div": "top", "path": "/1234567/aff_42/top", "sizes": [[300, 250], [336, 280]] },
-    { "div": "mid", "path": "/1234567/aff_42/mid", "sizes": [[300, 250]] }
-  ],
-  "targeting": { "aff": "42" }
+  "affiliates": {
+    "42": { "slots": [ { "div": "top", "path": "/1234567/aff_42/top", "sizes": [[300, 250], [336, 280]] },
+                       { "div": "mid", "path": "/1234567/aff_42/mid", "sizes": [[300, 250]] } ],
+            "targeting": { "camp": "spring" } },
+    "77": { "slots": [ { "div": "top", "path": "/1234567/aff_77/top", "sizes": [[300, 250]] } ] }
+  },
+  "house": { "slots": [ { "div": "top", "path": "/1234567/house/top", "sizes": [[300, 250]] } ] }
 }
 ```
 
-Strict schema (`parseAdUnitConfig`): unknown fields rejected; 1–20 slots; unique `div`; `path` must
-start with `/<networkCode>/`; sizes are integer pairs 1–2000; targeting keys `[a-z0-9_]{1,20}`,
-values `[A-Za-z0-9_.:-]{1,40}` (or arrays of up to 10); `ivt_k`, `ivt_t`, `ivt_e` are reserved.
-Missing or invalid config → no pass and 403. There is **no global/fallback config**. The config is
-read at admission too, so sites without one never cost a pass.
+Strict schema (`parseAdUnitConfig`): unknown fields rejected; affiliate ids `[A-Za-z0-9_-]{1,32}`
+(max 1000 per site); per set 1–20 slots with unique `div`; `path` must start with
+`/<networkCode>/`; sizes are integer pairs 1–2000; targeting keys `[a-z0-9_]{1,20}`, values
+`[A-Za-z0-9_.:-]{1,40}` (or arrays of up to 10); `aff`, `ivt_k`, `ivt_t`, `ivt_e` are reserved
+(the server sets them). Missing or invalid config → no pass and 403. There is **no global/fallback
+config**. The config is read at admission too, so sites without one never cost a pass.
+
+### Affiliate attribution (`?aff=`)
+
+- Affiliates link to the site with `?aff=<id>`. `ivt.js` sends it in `attribution.aff` and keeps
+  it in `sessionStorage` (`thebes:aff`) so later pages of the same visit in that tab keep it;
+  a new landing with a different `?aff=` replaces it.
+- The server checks the id against `affiliates` in the site config and signs it into the pass
+  (`aff` claim), so it cannot be changed afterwards.
+- Unknown or malformed id → no pass. No id → the site's `house` units if configured, otherwise no
+  pass (strict default). House traffic gets `aff=house` and no affiliate kill switch.
+- `ads:aff:<id>` is checked for that affiliate on both calls.
+- `/v1/ad-units` returns that affiliate's slots and sets `aff=<id>` (or `house`) in targeting.
 
 ## 6. Audit key-values (stateless)
 
@@ -187,6 +203,7 @@ Rotation: set `AD_PASS_SECRET_PREVIOUS` = old secret, `AD_PASS_PREVIOUS_KID` = o
 | KV/DO outage | deny |
 | Config tampering in KV pointing to a foreign script | GPT URL is a server constant; config schema is strict |
 | Error-detail probing | every failure is an empty 403 |
+| Affiliate puts another affiliate's id on its traffic | allowed (URL parameter). Revenue lands in the other affiliate's ad units, so the sender is not paid; it only matters if a killed affiliate tries to keep traffic monetised, and shows up as a spike in the other affiliate's numbers. Upgrade path: signed tracking links issued by the Worker |
 
 **Honest limit.** Once an approved visitor receives the config, the ad unit paths are visible in
 the browser. A partner can hard-code GPT with those paths for blocked traffic; JavaScript alone
@@ -201,7 +218,8 @@ gets no ads for that pageview.
 ## 9. Rollout
 
 1. `wrangler secret put AD_PASS_SECRET` (keep `AD_PASS_MODE=off`). Deploy. No behaviour change.
-2. Create per-affiliate ad units in GAM; write `adunits:site:<siteKey>` for one site.
+2. Create per-affiliate ad units in GAM; write `adunits:site:<siteKey>` for one site; make every
+   affiliate link carry `?aff=<id>` (decide per site whether organic traffic gets `house` units).
 3. Set `AD_PASS_MODE=observe`. On that site: remove hard-coded GPT/ad unit IDs, add `ads.js` and
    `data-ad-slot` placeholders. Watch fill, `ivt_e` split and `ivt_k` coverage in GAM.
 4. Add the daily GAM report job for missing/stale `ivt_k` (not in this repo yet).

@@ -203,3 +203,34 @@ it('ivt.js bundle stays free of GAM / ad-unit knowledge', () => {
     assert.ok(!ivtJs.includes(needle), `ivt.js must not contain ${needle}`);
   }
 });
+
+it('ivt.js sends ?aff= and keeps it for later pages in the same tab', async () => {
+  const store = new Map<string, string>();
+  const sessionStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } };
+  async function pageLoad(search: string) {
+    let sent: any;
+    const noop = () => {};
+    const window: any = { addEventListener: noop, removeEventListener: noop, dispatchEvent: noop, setInterval: () => 1, devicePixelRatio: 1 };
+    runInNewContext(ivtJs, {
+      window, crypto, URL, URLSearchParams, Intl, performance, sessionStorage, clearInterval: noop,
+      CustomEvent: class { constructor(public type: string) {} },
+      navigator: { userAgent: 'Test', language: 'en', languages: ['en'], cookieEnabled: true },
+      location: { href: 'https://gamewhame.com/x' + search, search },
+      screen: { width: 1000, height: 800, colorDepth: 24 },
+      document: {
+        currentScript: { dataset: { autoInit: 'true', endpoint: 'https://ivt.thebesads.com', siteKey: 'gamewhame.com' } },
+        referrer: '', visibilityState: 'visible', hasFocus: () => true, addEventListener: noop, removeEventListener: noop,
+        createElement: () => ({}), head: { appendChild: (s: any) => s.onload() },
+      },
+      fetch: async (_url: string, init: any) => { sent = JSON.parse(init.body); return { ok: true, json: async () => ({ status: 'NO_RUNTIME' }) }; },
+    });
+    await window.__THEBES_IVT_INIT__;
+    return sent.attribution;
+  }
+  assert.equal((await pageLoad('?aff=42&utm_source=google')).aff, '42');
+  assert.equal((await pageLoad('')).aff, '42', 'second page of the visit keeps the affiliate');
+  assert.equal((await pageLoad('?aff=77')).aff, '77', 'a new landing replaces it');
+  assert.equal((await pageLoad('?aff=bad%20id')).aff, '77', 'malformed value is ignored');
+  store.clear();
+  assert.equal((await pageLoad('')).aff, undefined, 'new tab without ?aff= sends none');
+});

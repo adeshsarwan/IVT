@@ -43,20 +43,23 @@ export type AdPassClaims = {
   exp: number;    // expiry, unix seconds
   n: string;      // 128-bit random nonce (single-use key)
   pv: string;     // policy version
-  aff: string | null; // affiliate id from the site's ad-unit config (kill-switch scope)
+  aff: string | null; // affiliate id from ?aff= (validated against the site config); null = house
   e: 0 | 1;       // IVT eligibility at issuance (always 1 in enforce mode)
   ih: string;     // keyed hash of client IP prefix (/24 v4, /64 v6)
   uh: string;     // keyed hash of User-Agent
 };
 
 export type AdSlot = { div: string; path: string; sizes: Array<[number, number]> };
+export type AdUnitSet = { slots: AdSlot[]; targeting: Record<string, string | string[]> };
 export type AdUnitConfig = {
-  v: 1;
+  v: 2;
   networkCode: string;
-  affiliate: string | null;
-  slots: AdSlot[];
-  targeting: Record<string, string | string[]>;
+  affiliates: Record<string, AdUnitSet>; // affiliate id -> that affiliate's own ad units
+  house: AdUnitSet | null;               // optional: visits that arrive without ?aff=
 };
+
+export const AFFILIATE_RE = /^[A-Za-z0-9_-]{1,32}$/;
+const MAX_AFFILIATES = 1000;
 
 // ---------- small crypto helpers ----------
 
@@ -231,27 +234,21 @@ export async function killSwitchesAllow(kv: KVNamespace, siteKey: string, affili
 
 const TARGETING_KEY_RE = /^[a-z0-9_]{1,20}$/;
 const TARGETING_VALUE_RE = /^[A-Za-z0-9_.:-]{1,40}$/;
-const RESERVED_TARGETING = new Set(["ivt_k", "ivt_t", "ivt_e"]);
+const RESERVED_TARGETING = new Set(["aff", "ivt_k", "ivt_t", "ivt_e"]);
 
-// Strict schema: unknown fields, wrong types or out-of-range values reject the whole config.
-export function parseAdUnitConfig(input: unknown): AdUnitConfig | null {
+function parseUnitSet(input: unknown, networkCode: string): AdUnitSet | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
-  const c = input as Record<string, unknown>;
-  const allowed = new Set(["v", "networkCode", "affiliate", "slots", "targeting"]);
-  if (Object.keys(c).some((k) => !allowed.has(k))) return null;
-  if (c.v !== 1) return null;
-  if (typeof c.networkCode !== "string" || !/^\d{1,20}$/.test(c.networkCode)) return null;
-  const affiliate = c.affiliate === undefined || c.affiliate === null ? null : c.affiliate;
-  if (affiliate !== null && (typeof affiliate !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(affiliate))) return null;
-  if (!Array.isArray(c.slots) || c.slots.length < 1 || c.slots.length > 20) return null;
+  const set = input as Record<string, unknown>;
+  if (Object.keys(set).some((k) => k !== "slots" && k !== "targeting")) return null;
+  if (!Array.isArray(set.slots) || set.slots.length < 1 || set.slots.length > 20) return null;
   const divs = new Set<string>();
   const slots: AdSlot[] = [];
-  for (const s of c.slots) {
+  for (const s of set.slots) {
     if (!s || typeof s !== "object" || Array.isArray(s)) return null;
     const slot = s as Record<string, unknown>;
     if (Object.keys(slot).some((k) => !["div", "path", "sizes"].includes(k))) return null;
     if (typeof slot.div !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(slot.div) || divs.has(slot.div)) return null;
-    if (typeof slot.path !== "string" || slot.path.length > 256 || !slot.path.startsWith(`/${c.networkCode}/`)
+    if (typeof slot.path !== "string" || slot.path.length > 256 || !slot.path.startsWith(`/${networkCode}/`)
       || !/^\/\d+(?:,\d+)?(?:\/[A-Za-z0-9._-]+)+$/.test(slot.path)) return null;
     if (!Array.isArray(slot.sizes) || slot.sizes.length < 1 || slot.sizes.length > 10) return null;
     const sizes: Array<[number, number]> = [];
@@ -263,9 +260,9 @@ export function parseAdUnitConfig(input: unknown): AdUnitConfig | null {
     slots.push({ div: slot.div, path: slot.path, sizes });
   }
   const targeting: Record<string, string | string[]> = {};
-  if (c.targeting !== undefined) {
-    if (!c.targeting || typeof c.targeting !== "object" || Array.isArray(c.targeting)) return null;
-    const entries = Object.entries(c.targeting as Record<string, unknown>);
+  if (set.targeting !== undefined) {
+    if (!set.targeting || typeof set.targeting !== "object" || Array.isArray(set.targeting)) return null;
+    const entries = Object.entries(set.targeting as Record<string, unknown>);
     if (entries.length > 20) return null;
     for (const [k, v] of entries) {
       if (!TARGETING_KEY_RE.test(k) || RESERVED_TARGETING.has(k)) return null;
@@ -274,28 +271,65 @@ export function parseAdUnitConfig(input: unknown): AdUnitConfig | null {
       else return null;
     }
   }
-  return { v: 1, networkCode: c.networkCode, affiliate, slots, targeting };
+  return { slots, targeting };
+}
+
+// Strict schema: unknown fields, wrong types or out-of-range values reject the whole config.
+export function parseAdUnitConfig(input: unknown): AdUnitConfig | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const c = input as Record<string, unknown>;
+  if (Object.keys(c).some((k) => !["v", "networkCode", "affiliates", "house"].includes(k))) return null;
+  if (c.v !== 2) return null;
+  if (typeof c.networkCode !== "string" || !/^\d{1,20}$/.test(c.networkCode)) return null;
+  if (!c.affiliates || typeof c.affiliates !== "object" || Array.isArray(c.affiliates)) return null;
+  const entries = Object.entries(c.affiliates as Record<string, unknown>);
+  if (entries.length > MAX_AFFILIATES) return null;
+  const affiliates: Record<string, AdUnitSet> = Object.create(null);
+  for (const [id, raw] of entries) {
+    if (!AFFILIATE_RE.test(id)) return null;
+    const set = parseUnitSet(raw, c.networkCode);
+    if (!set) return null;
+    affiliates[id] = set;
+  }
+  let house: AdUnitSet | null = null;
+  if (c.house !== undefined && c.house !== null) {
+    house = parseUnitSet(c.house, c.networkCode);
+    if (!house) return null;
+  }
+  if (!entries.length && !house) return null;
+  return { v: 2, networkCode: c.networkCode, affiliates, house };
 }
 
 export async function loadAdUnitConfig(kv: KVNamespace, siteKey: string): Promise<AdUnitConfig | null> {
   try {
     const raw = await kv.get(`adunits:site:${siteKey}`);
-    if (raw === null || raw.length > 32768) return null;
+    if (raw === null || raw.length > 524288) return null;
     return parseAdUnitConfig(JSON.parse(raw));
   } catch {
     return null;
   }
 }
 
-// Config + kill switches. Null means "no ads" for any reason.
-async function adGate(env: AdPassEnv, siteKey: string): Promise<AdUnitConfig | null> {
-  const [config, baseAllowed] = await Promise.all([
+// Affiliate from the visit: a valid id, null when absent, undefined when malformed.
+export function affiliateFromAttribution(attribution: unknown): string | null | undefined {
+  if (!attribution || typeof attribution !== "object") return null;
+  const raw = (attribution as Record<string, unknown>).aff;
+  if (raw === undefined || raw === null || raw === "") return null;
+  return typeof raw === "string" && AFFILIATE_RE.test(raw) ? raw : undefined;
+}
+
+type Gate = { networkCode: string; units: AdUnitSet };
+
+// Config + kill switches for one site and affiliate. Null means "no ads" for any reason:
+// unknown affiliate, no house units for a visit without one, any switch off, any read error.
+async function adGate(env: AdPassEnv, siteKey: string, affiliate: string | null): Promise<Gate | null> {
+  const [config, allowed] = await Promise.all([
     loadAdUnitConfig(env.IVT_CONFIG, siteKey),
-    killSwitchesAllow(env.IVT_CONFIG, siteKey, null),
+    killSwitchesAllow(env.IVT_CONFIG, siteKey, affiliate),
   ]);
-  if (!config || !baseAllowed) return null;
-  if (config.affiliate && !(await killSwitchesAllow(env.IVT_CONFIG, siteKey, config.affiliate))) return null;
-  return config;
+  if (!config || !allowed) return null;
+  const units = affiliate === null ? config.house : (Object.hasOwn(config.affiliates, affiliate) ? config.affiliates[affiliate] : null);
+  return units ? { networkCode: config.networkCode, units } : null;
 }
 
 // ---------- issuance (called from /v1/admit) ----------
@@ -307,6 +341,7 @@ export type IssueInput = {
   siteKey: string;
   origin: string;
   eligible: boolean;
+  affiliate: string | null | undefined; // from affiliateFromAttribution()
   nowMs?: number;
 };
 
@@ -318,9 +353,9 @@ export async function maybeIssueAdPass(env: AdPassEnv, input: IssueInput): Promi
     if (mode === "enforce" && !input.eligible) return null;
     const key = currentKey(env);
     const binding = requestBinding(input.request);
-    if (!key || !binding) return null;
-    const config = await adGate(env, input.siteKey);
-    if (!config) return null;
+    if (!key || !binding || input.affiliate === undefined) return null;
+    const gate = await adGate(env, input.siteKey, input.affiliate);
+    if (!gate) return null;
     const now = Math.floor((input.nowMs ?? Date.now()) / 1000);
     const nonce = new Uint8Array(16);
     crypto.getRandomValues(nonce);
@@ -328,7 +363,7 @@ export async function maybeIssueAdPass(env: AdPassEnv, input: IssueInput): Promi
     return await signAdPass(key, {
       v: TOKEN_VERSION, typ: TOKEN_KIND, sid: input.sessionId, site: input.siteId, sk: input.siteKey,
       o: input.origin, iat: now, exp: now + adPassTtlSeconds(env), n: b64url(nonce), pv: policyVersion(env),
-      aff: config.affiliate, e: input.eligible ? 1 : 0, ih, uh,
+      aff: input.affiliate, e: input.eligible ? 1 : 0, ih, uh,
     });
   } catch {
     return null;
@@ -383,8 +418,8 @@ export async function handleAdUnits(request: Request, env: AdPassEnv, origin: st
     if (!claims) return deny(origin);
 
     // Re-check config and kill switches: they may have changed since admission.
-    const config = await adGate(env, claims.sk);
-    if (!config || config.affiliate !== claims.aff) return deny(origin);
+    const gate = await adGate(env, claims.sk, claims.aff);
+    if (!gate) return deny(origin);
 
     if (singleUse(env) && !(await claimNonce(env, claims))) return deny(origin);
 
@@ -393,9 +428,9 @@ export async function handleAdUnits(request: Request, env: AdPassEnv, origin: st
     const [ivtK, ivtT] = await Promise.all([dailyAuditKey(key.secret, claims.sk), passAuditTag(key.secret, claims.n)]);
     const payload = {
       gpt: GPT_URL,
-      networkCode: config.networkCode,
-      slots: config.slots,
-      targeting: { ...config.targeting, ivt_k: ivtK, ivt_t: ivtT, ivt_e: String(claims.e) },
+      networkCode: gate.networkCode,
+      slots: gate.units.slots,
+      targeting: { ...gate.units.targeting, aff: claims.aff ?? "house", ivt_k: ivtK, ivt_t: ivtT, ivt_e: String(claims.e) },
     };
     return new Response(JSON.stringify(payload), {
       status: 200,

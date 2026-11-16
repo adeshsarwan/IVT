@@ -1,7 +1,7 @@
 import { getNetworkIntel, observeOnlyNetworkRisk } from "./network";
 import { evaluateIdentityRisk } from "./identity";
 import { monetizationEligibility } from "./eligibility";
-import { type AdPassEnv, handleAdUnits, maybeIssueAdPass } from "./adpass";
+import { type AdPassEnv, affiliateFromAttribution, handleAdUnits, maybeIssueAdPass } from "./adpass";
 
 export interface Env extends AdPassEnv {
   DB: D1Database;
@@ -392,6 +392,7 @@ export default {
       const adPass = await maybeIssueAdPass(env, {
         request, sessionId, siteId: site.id, siteKey: body.siteKey, origin,
         eligible: eligible || (classification === "CLEAN" && decision === "PASS"),
+        affiliate: affiliateFromAttribution(body.attribution),
       });
       return json({
         status: "ADMITTED", monetization: { eligible }, runtime: `/v1/runtime/${capability}`, telemetryToken, expiresIn: ttl,
