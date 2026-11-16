@@ -227,7 +227,12 @@ gets no ads for that pageview.
    (sites without config get no ads, so onboard config before moving a site's tags).
 6. Practise the kill switches (`ads:site:*`, `ads:global`).
 
-## 10. Demo page
+## 10. Pending database changes
+
+Attribution, audit and GAM reconciliation tables are proposed (not applied) in
+[AD_PASS_DB_CHANGES.md](AD_PASS_DB_CHANGES.md), to ship together in one migration.
+
+## 11. Demo page
 
 `npm run build:demo` writes `.wrangler/demo/ad-pass-demo.html`: one self-contained page that runs
 the real Worker and SDK code in the browser (in-memory KV/D1/DO, demo keys, GPT stubbed, no real
