@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "npm run build:sdk && esbuild tests/*.test.ts --bundle --platform=node --format=esm --outdir=.wrangler/test --out-extension:.js=.mjs && node --test .wrangler/test/*.test.mjs",
+    "test": "npm run build:sdk && esbuild tests/*.test.ts --bundle --platform=node --format=esm --outdir=.wrangler/test --out-extension:.js=.mjs && node --test .wrangler/test/*.test.mjs && npm run test:provenance",
     "build:sdk": "node scripts/build-sdk.mjs",
     "build": "npm run check && npm run build:sdk",
     "dev": "npm run build:sdk && wrangler dev",
     "deploy": "npm run build && wrangler deploy",
-    "build:demo": "node demo/build.mjs"
+    "build:demo": "node demo/build.mjs",
+    "test:provenance": "esbuild provenance/tests/*.test.ts --bundle --platform=node --format=esm --outdir=.wrangler/test-provenance --out-extension:.js=.mjs --log-level=warning && node --test .wrangler/test-provenance/*.test.mjs",
+    "build:provenance-demo": "node provenance/demo/build.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260910.1",
