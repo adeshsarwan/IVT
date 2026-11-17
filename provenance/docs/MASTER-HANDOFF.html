@@ -1,0 +1,313 @@
+<title>Traffic Provenance Handoff</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one readable column (~760px) with full-width cards for diagrams and tables; numbered sections because this is a handoff read top to bottom. */
+:root{
+  --bg:#f6f8f9; --card:#ffffff; --ink:#15212b; --muted:#5b6b78; --line:#d9e1e6;
+  --accent:#0f7b83; --soft:#e3f2f3; --ok:#1d7a46; --softok:#e3f4ea; --bad:#b4372b; --softbad:#fbe9e6; --warn:#9a6a00; --softwarn:#fbf1d9;
+  --f-display:"Space Grotesk",ui-sans-serif,system-ui,sans-serif; --f-body:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; --f-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f161b; --card:#151f26; --ink:#e3eaee; --muted:#93a4b0; --line:#2a3943;
+  --accent:#4cc3c9; --soft:#15343a; --ok:#5fcf8c; --softok:#16301f; --bad:#f08a7c; --softbad:#3a1c18; --warn:#e4b44c; --softwarn:#33290f; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f161b; --card:#151f26; --ink:#e3eaee; --muted:#93a4b0; --line:#2a3943;
+  --accent:#4cc3c9; --soft:#15343a; --ok:#5fcf8c; --softok:#16301f; --bad:#f08a7c; --softbad:#3a1c18; --warn:#e4b44c; --softwarn:#33290f; color-scheme:dark}
+body{background:var(--bg);color:var(--ink);font:16px/1.6 var(--f-body)}
+main{max-width:860px;margin:0 auto;padding-block:32px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;line-height:1.2}
+h1{font-size:34px;margin:6px 0 10px}
+h2{font-size:24px;margin:44px 0 12px;padding-top:20px;border-top:1px solid var(--line)}
+h2 .n{color:var(--accent);margin-right:8px}
+h3{font-size:17px;margin:22px 0 8px}
+p{margin:8px 0}
+ul,ol{margin:6px 0;padding-left:22px} li{margin:4px 0}
+a{color:var(--accent)}
+.eyebrow{font:600 12px/1 var(--f-body);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.lede{font-size:17px;color:var(--muted);max-width:65ch}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin:12px 0;min-width:0}
+.scroll{overflow-x:auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.grid .card{margin:0}
+.card h4{margin:0 0 6px;font:600 16px var(--f-display)}
+.card p,.card li{font-size:15px}
+.muted{color:var(--muted)} .small{font-size:13.5px}
+code{font-family:var(--f-mono);font-size:.86em;background:var(--soft);padding:1px 5px;border-radius:4px;word-break:break-word}
+pre{font-family:var(--f-mono);font-size:13px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;margin:8px 0}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+tr:last-child td{border-bottom:0}
+.pill{display:inline-block;font:600 12px/1.4 var(--f-body);padding:2px 9px;border-radius:99px;white-space:nowrap}
+.p-ok{background:var(--softok);color:var(--ok)} .p-bad{background:var(--softbad);color:var(--bad)} .p-warn{background:var(--softwarn);color:var(--warn)} .p-acc{background:var(--soft);color:var(--accent)}
+.callout{border-left:4px solid var(--accent);background:var(--card);padding:12px 16px;border-radius:6px;margin:14px 0}
+.callout.warn{border-left-color:var(--warn)}
+.steps{counter-reset:s;list-style:none;padding:0}
+.steps>li{counter-increment:s;position:relative;padding:10px 12px 10px 46px;background:var(--card);border:1px solid var(--line);border-radius:8px;margin:8px 0}
+.steps>li::before{content:counter(s);position:absolute;left:12px;top:10px;width:24px;height:24px;border-radius:50%;background:var(--soft);color:var(--accent);font:700 13px/24px var(--f-display);text-align:center}
+.who{font:600 11px var(--f-body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-left:6px}
+.check{list-style:none;padding:0} .check li::before{content:"☐ ";color:var(--accent)}
+svg{display:block;width:100%;height:auto}
+svg text{fill:var(--ink);font:13px var(--f-body)}
+svg .m{fill:var(--muted);font-size:11.5px}
+svg .mono{font-family:var(--f-mono);font-size:11px}
+svg .b{fill:var(--card);stroke:var(--line);stroke-width:1.5}
+svg .a{fill:var(--soft);stroke:var(--accent);stroke-width:1.5}
+svg .r{fill:var(--softbad);stroke:var(--bad);stroke-width:1.5}
+svg .g{fill:none;stroke:var(--muted);stroke-width:1.2;stroke-dasharray:5 4}
+svg .ar{stroke:var(--muted);stroke-width:1.6;fill:none;marker-end:url(#ah)}
+svg .hook{stroke:var(--accent);stroke-width:2.2;fill:none;marker-end:url(#ah2)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+
+<main>
+<div class="eyebrow">IVT · Traffic Provenance · master document · 2026-11-18</div>
+<h1>Traffic Provenance Handoff</h1>
+<p class="lede">Checks whether an affiliate's visitors really came from the Google ads they claim to have bought. This page covers what it is, how it fits with the existing IVT and Ad Pass, how we get Google's data (the token), what's built, and what's left before going live.</p>
+
+<div class="card">
+<h3 style="margin-top:0">In one minute</h3>
+<ul>
+  <li><b>Problem:</b> an affiliate can send bots, porn-site or junk traffic and call it "Google Ads". Google then penalises <b>our</b> ad account.</li>
+  <li><b>Check:</b> every real Google ad click carries a unique <code>gclid</code>, and Google keeps a list of every gclid it billed. Each day we pull that list and match it against the gclids that reached our sites. We also compare counts: our visits vs Google's clicks.</li>
+  <li><b>Result per affiliate:</b> <span class="pill p-ok">OK</span> <span class="pill p-warn">WATCH</span> <span class="pill p-warn">THROTTLE</span> <span class="pill p-bad">BLOCK</span>. A BLOCK is only a <b>recommendation</b>: a person reviews it and turns ads off for that affiliate by hand.</li>
+  <li><b>Fit:</b> a separate service. It needs two small hooks in the existing code (forward each landing; read the kill switch, which Ad Pass already does).</li>
+  <li><b>Status:</b> logic, database, batch job and tests are built and run locally against a fake Google API. Not deployed. No real Google token yet. Google only; Meta later.</li>
+</ul>
+</div>
+
+<h2><span class="n">1</span>The three pieces and who does what</h2>
+<div class="card scroll">
+<table>
+<tr><th>Piece</th><th>Question it answers</th><th>When</th><th>Stores in</th><th>State</th></tr>
+<tr><td><b>Existing IVT</b></td><td>Does this visit look like a bot? (network, browser, behaviour signals)</td><td>live, every visit</td><td>D1 <code>traffic_sessions</code></td><td><span class="pill p-acc">shadow mode</span></td></tr>
+<tr><td><b>Ad Pass</b> (gate pass)</td><td>May this visit show ads right now? Yes or no</td><td>live, every page and refresh</td><td>KV kill switches <code>ads:global</code>, <code>ads:site:&lt;key&gt;</code>, <code>ads:aff:&lt;id&gt;</code></td><td><span class="pill p-acc">branch chandra/ad-pass</span></td></tr>
+<tr><td><b>Traffic Provenance</b> (this)</td><td>Was this affiliate's traffic really bought on Google, and from clean placements?</td><td>batch, every 6 hours</td><td>ClickHouse (raw) + D1 (verdicts, review queue)</td><td><span class="pill p-acc">branch chandra/traffic-provenance</span></td></tr>
+</table>
+</div>
+<p class="muted small">The IVT judges <i>one visit</i>. Provenance judges <i>an affiliate's traffic over thousands of visits</i>, using Google's own records. They catch different fraud: a perfect human browser on a porn placement passes the IVT but fails Provenance.</p>
+
+<h2><span class="n">2</span>Integration decision: keep it independent</h2>
+<p>Your feeling is right. Provenance should be its own service, joined to the rest by two thin hooks.</p>
+
+<div class="card scroll">
+<svg viewBox="0 0 900 390" role="img" aria-label="Visitors go through the SDK to the IVT and Ad Pass Worker; hook A forwards each landing to a queue; the separate Provenance Worker pulls Google clicks, matches in ClickHouse and puts BLOCKs in a review queue; a person sets the kill switch in KV, which Ad Pass already reads" style="min-width:720px">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="var(--muted)"/></marker>
+    <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="var(--accent)"/></marker>
+  </defs>
+  <text class="m" x="20" y="22">EXISTING · live, per visit</text>
+  <rect class="g" x="10" y="30" width="520" height="150" rx="12"/>
+  <rect class="b" x="30" y="60" width="130" height="64" rx="10"/><text x="95" y="86" text-anchor="middle">Visitor + SDK</text><text class="mono" x="95" y="106" text-anchor="middle">?aff=42&amp;gclid=…</text>
+  <path class="ar" d="M160 92 H200"/>
+  <rect class="b" x="205" y="50" width="160" height="84" rx="10"/><text x="285" y="76" text-anchor="middle">IVT Worker</text><text class="mono" x="285" y="96" text-anchor="middle">/v1/admit</text><text class="m" x="285" y="114" text-anchor="middle">bot score → D1</text>
+  <path class="ar" d="M365 92 H395"/>
+  <rect class="b" x="400" y="50" width="115" height="84" rx="10"/><text x="457" y="76" text-anchor="middle">Ad Pass</text><text class="mono" x="457" y="96" text-anchor="middle">/v1/ad-check</text><text class="m" x="457" y="114" text-anchor="middle">ads yes / no</text>
+
+  <!-- hook A -->
+  <path class="hook" d="M285 134 V230 H560"/>
+  <text x="300" y="168" style="font-weight:700;fill:var(--accent)">Hook A</text><text class="m" x="300" y="184">forward each landing</text><text class="m" x="300" y="198">(1 line, never blocks)</text>
+
+  <text class="m" x="560" y="22">NEW · separate Worker, every 6 hours</text>
+  <rect class="g" x="550" y="30" width="340" height="340" rx="12"/>
+  <rect class="b" x="565" y="205" width="120" height="50" rx="10"/><text x="625" y="235" text-anchor="middle">Queue</text>
+  <rect class="a" x="705" y="50" width="170" height="64" rx="10"/><text x="790" y="76" text-anchor="middle">Google Ads API</text><text class="m" x="790" y="96" text-anchor="middle">every click, read-only</text>
+  <path class="ar" d="M790 114 V190"/>
+  <path class="ar" d="M685 230 H700"/>
+  <rect class="a" x="705" y="195" width="170" height="70" rx="10"/><text x="790" y="221" text-anchor="middle">ClickHouse</text><text class="m" x="790" y="241" text-anchor="middle">match by gclid + counts</text>
+  <path class="ar" d="M790 265 V295"/>
+  <rect class="b" x="705" y="300" width="170" height="56" rx="10"/><text x="790" y="324" text-anchor="middle">D1 review queue</text><text class="m" x="790" y="342" text-anchor="middle">BLOCK = suggestion</text>
+
+  <!-- person + hook B -->
+  <path class="ar" d="M705 328 H470"/>
+  <rect class="r" x="330" y="296" width="140" height="64" rx="10"/><text x="400" y="322" text-anchor="middle">Person reviews</text><text class="m" x="400" y="342" text-anchor="middle">wrangler kv put</text>
+  <path class="hook" d="M400 296 V270 H457 V140"/>
+  <text x="470" y="262" style="font-weight:700;fill:var(--accent)">Hook B</text>
+  <text class="mono" x="40" y="320">KV  ads:aff:42 = off</text>
+  <text class="m" x="40" y="340">Ad Pass already reads this key.</text>
+  <text class="m" x="40" y="356">Nothing new to build here.</text>
+</svg>
+</div>
+
+<div class="grid">
+  <div class="card"><h4>Why independent</h4><ul>
+    <li>Different rhythm: IVT answers in milliseconds; Provenance needs a day of Google data.</li>
+    <li>Different volume: hundreds of millions of rows. D1 can't hold that; ClickHouse can.</li>
+    <li>If Provenance or Google is down, ads and IVT keep working.</li>
+    <li>It can ship, be tuned and be rolled back without touching the live path.</li>
+  </ul></div>
+  <div class="card"><h4>Why the IVT data can't be reused as is</h4><ul>
+    <li>IVT stores only a <b>hash</b> of the gclid (<code>click_id_hash</code>), so it can't be matched against Google's raw list.</li>
+    <li><code>traffic_sessions</code> has no affiliate column.</li>
+    <li>The SDK forwards only gclid / utm_* today, not the campaign, network and placement values Google's tracking template adds.</li>
+  </ul></div>
+</div>
+
+<h3>The only changes needed in existing code</h3>
+<div class="card scroll">
+<table>
+<tr><th>Hook</th><th>Where</th><th>Change</th><th>Size</th></tr>
+<tr><td><b>A1</b></td><td>SDK <code>src/sdk/ivt.ts</code> → <code>attributionEvidence()</code></td><td>Also forward <code>cid</code>, <code>ag</code>, <code>net</code>, <code>dev</code>, <code>plc</code> (Google tracking-template values) and the route key.</td><td>1 line (key list)</td></tr>
+<tr><td><b>A2</b></td><td>Worker <code>/v1/admit</code></td><td><code>ctx.waitUntil(env.PROVENANCE_Q.send(…))</code> with session id, time, site, aff, the landing parameters, hashed IP and UA. Failures are ignored, never blocks.</td><td>~10 lines + queue binding</td></tr>
+<tr><td><b>B</b></td><td>KV <code>ads:aff:&lt;id&gt;</code></td><td>None. Ad Pass already turns ads off for that affiliate on every site.</td><td>0</td></tr>
+<tr><td class="muted">later</td><td>Ad Pass</td><td>Read a THROTTLE key (e.g. <code>adcap:aff:&lt;id&gt;</code> = fewer ads) if we want a middle step between on and off.</td><td>open</td></tr>
+<tr><td class="muted">later</td><td>IVT scoring</td><td>Use the affiliate's Provenance tier as one input to the visit's source risk.</td><td>optional</td></tr>
+</table>
+</div>
+<div class="callout"><b>Decision needed:</b> store the raw gclid in ClickHouse (simplest), or store an HMAC of it and hash Google's gclids with the same key before matching (no raw IDs at rest). Both work with the current code shape; the second needs the hash key shared with the Provenance Worker.</div>
+
+<h2><span class="n">3</span>How the gclid check works</h2>
+<div class="grid">
+  <div class="card"><h4>Match every gclid</h4><p>Each gclid that reached us is looked up in Google's list for that affiliate's account.</p><ul>
+    <li><b>matched:</b> real paid click</li>
+    <li><b>not found:</b> invented by a bot</li>
+    <li><b>malformed:</b> forged or a literal <code>{gclid}</code></li>
+    <li><b>foreign:</b> real, but from <i>another</i> affiliate's account (copied)</li>
+  </ul></div>
+  <div class="card"><h4>Compare counts</h4><ul>
+    <li>Our visits ÷ Google's clicks, per day. Well above 1 means traffic is being added that was never bought.</li>
+    <li>Google clicks that never reached us. Usually a few %. Near 0% means the report was built from our own data (tampering).</li>
+  </ul></div>
+  <div class="card"><h4>Other checks</h4><ul>
+    <li>Display / partner-network share and blocklisted placements (porn, junk apps)</li>
+    <li>The same gclid from many IPs (replay)</li>
+    <li>24/7 flat traffic, device mismatch, impossible timing</li>
+  </ul></div>
+</div>
+<p class="muted small">Verdicts use 95% confidence ranges and minimum sample sizes, so a small or noisy day never blocks anyone. Full rules: <code>provenance/README.md</code>. Visual explainer: <code>docs/06-traffic-provenance-simple.html</code>.</p>
+
+<h2><span class="n">4</span>Getting Google's data: the token</h2>
+<p>Recommended model: <b>one</b> set of Google credentials owned by us. Each partner gives that one Google login <b>read-only</b> access to their ad accounts. No per-partner tokens to collect, rotate or lose.</p>
+
+<h3>One-time setup on our side <span class="who">owner: you · about 1 hour + Google's review</span></h3>
+<ol class="steps">
+  <li><b>Create a dedicated Google account</b> for data access, e.g. <code>ads-data@yourcompany.com</code>. Not a personal account; it should outlive any one employee. Turn on 2-step verification.</li>
+  <li><b>Create a Google Ads manager account (MCC)</b> while signed in as that account: <code>ads.google.com/home/tools/manager-accounts</code>. It's free. It's needed to apply for API access.</li>
+  <li><b>Apply for a developer token:</b> in the MCC, Admin → <b>API Center</b>. Describe the tool truthfully: "internal, read-only reporting and click validation for affiliate traffic we monetise". A new token starts with limited access; then apply for <b>Basic access</b> (thousands of requests/day, enough for 100+ partners). Google reviews it; allow days to a few weeks. <span class="pill p-warn">verify current access levels</span></li>
+  <li><b>Create a Google Cloud project</b> (console.cloud.google.com) → enable <b>Google Ads API</b> → OAuth consent screen → create an <b>OAuth client ID</b>. If the company uses Google Workspace, mark the app <i>Internal</i> to skip Google's app verification. <span class="pill p-warn">verify scope review rules</span></li>
+  <li><b>Generate one refresh token</b> for the data account with the scope <code>https://www.googleapis.com/auth/adwords</code> (Google's OAuth Playground with your own client ID, or Google's sample auth script). It lets the job get short-lived access tokens without anyone logging in.</li>
+  <li><b>Store the five values as secrets</b>, never in chat, email, tickets or the repo:
+    <pre>GADS_DEVELOPER_TOKEN     from API Center
+GADS_CLIENT_ID           from the OAuth client
+GADS_CLIENT_SECRET       from the OAuth client
+GADS_MCC_REFRESH_TOKEN   from step 5
+GADS_MCC_ID              the manager account id (digits)</pre>
+    Locally: a git-ignored <code>.dev.vars</code> file. Production: <code>npx wrangler secret put &lt;NAME&gt;</code> on the Provenance Worker only.</li>
+</ol>
+
+<h3>Per partner <span class="who">owner: the partner · about 2 minutes</span></h3>
+<div class="card scroll">
+<table>
+<tr><th>Option</th><th>What the partner does</th><th>Access we get</th><th></th></tr>
+<tr><td><b>Read-only user</b></td><td>Google Ads → Admin → Access and security → Users → <b>+</b> → our data email → access level <b>Read only</b>.</td><td>View only, can't change anything.</td><td><span class="pill p-ok">recommended</span></td></tr>
+<tr><td>Link to our MCC</td><td>Accept our manager-link request (Admin → Access and security → Managers).</td><td>Manager access to the account. Easier for us with many accounts, but partners may be uneasy.</td><td><span class="pill p-acc">for big partners</span></td></tr>
+<tr><td>Their own OAuth grant</td><td>Click "Connect Google Ads" on our platform and approve read access.</td><td>Read access through their own login. Needs our app to pass Google's OAuth review.</td><td><span class="pill p-acc">later</span></td></tr>
+</table>
+</div>
+<p><b>Also required from every partner</b> (put it in the partner terms):</p>
+<ul>
+  <li><b>Auto-tagging ON</b>, so every click carries a gclid.</li>
+  <li><b>Tracking template</b> at account level: <code>{lpurl}?cid={campaignid}&amp;ag={adgroupid}&amp;net={network}&amp;dev={device}&amp;plc={placement}</code></li>
+  <li>Tell us every Google Ads account id (customer id) they send traffic from. Traffic claiming an account we can't read is treated as unverified.</li>
+</ul>
+
+<h3>How I (Claude) get the data to test with real accounts</h3>
+<ul>
+  <li>You put the five secrets in <code>repo-provenance/.dev.vars</code> yourself (git-ignored). Don't paste them into chat.</li>
+  <li>One partner adds the data email as read-only.</li>
+  <li>With your explicit go-ahead, I run a <b>read-only dry run</b> for that one account: pull one day of clicks into the local ClickHouse and show the match report. Nothing is written to KV or production.</li>
+  <li>Until then, every run uses the fake Google API. No real Google calls have been made.</li>
+</ul>
+
+<h2><span class="n">5</span>How it runs</h2>
+<div class="card scroll">
+<table>
+<tr><th>Step</th><th>What happens</th><th>Where</th></tr>
+<tr><td>Collect</td><td>Hook A sends each landing to a queue; the consumer inserts batches into ClickHouse <code>landings</code>.</td><td>Queue → ClickHouse</td></tr>
+<tr><td>Sync</td><td>Every 6 h, one job per partner pulls <b>every</b> click of yesterday and the day before (Google adds late clicks), plus Google's own click totals. Re-running replaces the day, so there are no duplicates.</td><td>Google Ads API → ClickHouse</td></tr>
+<tr><td>Match</td><td>ClickHouse joins our gclids to Google's clicks; the rules engine turns windows of 5,000 visits (or 24 h) into verdicts.</td><td>ClickHouse + engine</td></tr>
+<tr><td>Decide</td><td>Circuit breaker: escalates fast, recovers slowly. BLOCK needs 2 bad windows or one very clear one.</td><td>D1</td></tr>
+<tr><td>Review</td><td>A BLOCK opens a review item with the evidence. A person applies or dismisses it. Unblocking is also manual.</td><td>D1 → person → KV</td></tr>
+</table>
+</div>
+<ul>
+  <li><b>Isolation:</b> one partner failing (revoked access, outage) never stops the others; their last verdict holds.</li>
+  <li><b>Cost on Google's side:</b> about 4 API requests per account per run, however many clicks.</li>
+  <li><b>Retention:</b> raw rows deleted after 90 days; daily totals and verdicts kept.</li>
+</ul>
+
+<h3>Local test run (fake Google API, local ClickHouse)</h3>
+<div class="card scroll">
+<table>
+<tr><th>Partner</th><th>Match</th><th>Signals</th><th>Result</th></tr>
+<tr><td>clean</td><td>100%</td><td>0.96 visits per Google click</td><td><span class="pill p-ok">OK</span></td></tr>
+<tr><td>bot farm</td><td>34%</td><td>3.1 visits per click, flat 24/7</td><td><span class="pill p-bad">BLOCK · review</span></td></tr>
+<tr><td>porn placements</td><td>100%</td><td>real clicks, blocklisted sites/apps</td><td><span class="pill p-bad">BLOCK · review</span></td></tr>
+<tr><td>forged / replayed</td><td>–</td><td>477 malformed gclids, same gclid from many IPs</td><td><span class="pill p-bad">BLOCK · review</span></td></tr>
+<tr><td>copied gclids</td><td>0%</td><td>968 foreign gclids from another affiliate's account</td><td><span class="pill p-bad">BLOCK · review</span></td></tr>
+<tr><td>revoked access</td><td>–</td><td>Google returned 403; marked "no access"; others unaffected</td><td><span class="pill p-warn">no data</span></td></tr>
+</table>
+</div>
+
+<h2><span class="n">6</span>Rollout plan</h2>
+<div class="card scroll">
+<table>
+<tr><th>Phase</th><th>What</th><th>Exit when</th></tr>
+<tr><td><b>0 · Access</b></td><td>Data account, MCC, developer token, Cloud project, ClickHouse Cloud account. Partner terms updated.</td><td>Basic access approved; 1 partner gives read-only access</td></tr>
+<tr><td><b>1 · Dry run</b></td><td>Read-only pull for 1 partner into local ClickHouse; compare with their own Google Ads UI numbers.</td><td>Daily totals match Google's UI</td></tr>
+<tr><td><b>2 · Shadow</b></td><td>Deploy the Provenance Worker + hooks A1/A2. Verdicts computed, no reviews acted on. Tune thresholds.</td><td>2–4 weeks; no false BLOCKs on partners we trust</td></tr>
+<tr><td><b>3 · Manual blocking</b></td><td>Review queue live; people act on BLOCKs. Onboard partners in batches.</td><td>Stable; review load manageable</td></tr>
+<tr><td class="muted">4 · Later</td><td>THROTTLE key in Ad Pass, optional automatic blocking, Meta.</td><td>–</td></tr>
+</table>
+</div>
+
+<h2><span class="n">7</span>Still to build or decide before going live</h2>
+<div class="grid">
+  <div class="card"><h4>To build</h4><ul>
+    <li>Hooks A1 + A2 in the SDK and <code>/v1/admit</code></li>
+    <li>Review page: list open items with evidence; <b>Apply</b> writes the KV key and an audit log entry; <b>Dismiss</b> with a reason</li>
+    <li>Alerts on new review items (Slack or email)</li>
+    <li>Partner registry: add a partner, their account ids, which access option, status (last sync, errors)</li>
+    <li>Monitoring: failed syncs, dead-letter queue, stale data</li>
+    <li>Encrypted storage for partner tokens if we use their own OAuth grants</li>
+  </ul></div>
+  <div class="card"><h4>To decide</h4><ul>
+    <li>ClickHouse Cloud (managed) or self-hosted; check pricing on real volume</li>
+    <li>Raw gclid or hashed gclid at rest (section 2)</li>
+    <li>THROTTLE: build the reduced-ads key in Ad Pass, or stay on/off only</li>
+    <li>Partner terms: auto-tagging, tracking template, read access, consequences of a BLOCK</li>
+    <li>Thresholds after shadow mode (defaults are in code)</li>
+    <li>Who reviews BLOCKs, and how fast</li>
+  </ul></div>
+  <div class="card"><h4>Known limits</h4><ul>
+    <li>iOS app-campaign clicks carry gbraid/wbraid instead of a gclid; they're checked by daily totals only</li>
+    <li>Google's click list is available for the last 90 days only <span class="pill p-warn">verify</span></li>
+    <li>Visits without <code>aff</code> (house traffic) have no per-affiliate switch</li>
+    <li>Meta not covered yet; it only offers counts, no click ids</li>
+  </ul></div>
+</div>
+
+<h2><span class="n">8</span>Handoff: code, commands, docs</h2>
+<div class="card scroll">
+<table>
+<tr><th>What</th><th>Where</th></tr>
+<tr><td>Branch (local commits, not pushed)</td><td><code>chandra/traffic-provenance</code> in worktree <code>repo-provenance/</code>, branched from <code>chandra/ad-pass</code>. Never <code>main</code>.</td></tr>
+<tr><td>Rules engine (pure code)</td><td><code>provenance/src/</code></td></tr>
+<tr><td>Pipeline: ClickHouse schema + client, Google Ads client, batch job, Worker entry, D1 schema</td><td><code>provenance/pipeline/</code></td></tr>
+<tr><td>Tests (133 Provenance + 147 existing, all green)</td><td><code>provenance/tests/</code></td></tr>
+<tr><td>Browser lab: 18 scenarios, 100-partner view</td><td><code>provenance/demo/index.html</code></td></tr>
+<tr><td>Rules, formulas, every reason code; pipeline section 12</td><td><code>provenance/README.md</code></td></tr>
+<tr><td>Partner access details</td><td><code>provenance/docs/PARTNER_DATA_ACCESS.md</code></td></tr>
+<tr><td>Visual explainer · this document</td><td><code>provenance/docs/</code> and <code>docs/</code> (06 and 00)</td></tr>
+</table>
+</div>
+<p><b>Run locally</b> (needs Docker):</p>
+<pre>docker run -d --name ivt-clickhouse -p 8123:8123 -e CLICKHOUSE_DB=provenance \
+  -e CLICKHOUSE_USER=dev -e CLICKHOUSE_PASSWORD=dev clickhouse/clickhouse-server:25.8
+npm run provenance:local                                   # full daily job, prints the report
+CLICKHOUSE_URL=http://localhost:8123 npm run test:provenance  # incl. end-to-end tests</pre>
+
+<div class="callout warn"><b>Ground rules followed so far:</b> nothing pushed, nothing deployed, no production KV or D1 touched, no real Google or Meta API calls. API details marked <i>verify</i> must be checked against Google's current documentation before going live.</div>
+</main>

@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Traffic Provenance Explained</title>
+<style>
+:root{
+  --bg:#fbfaf7; --card:#ffffff; --ink:#1d1d1b; --muted:#5f5e58; --line:#d9d6cc;
+  --accent:#2f5bd3; --ok:#1f8a4c; --bad:#c2412d; --warn:#b7791f; --thr:#c26a1d;
+  --soft:#eef2fb; --softok:#e8f5ee; --softbad:#fbecea; --softwarn:#fbf4e4;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#16171a; --card:#1f2125; --ink:#ecebe6; --muted:#a3a29b; --line:#3a3c42;
+    --accent:#7d9cf0; --ok:#5cc58a; --bad:#ef7b67; --warn:#e2b04f; --thr:#f0995a;
+    --soft:#232a3d; --softok:#1d2f25; --softbad:#3a2320; --softwarn:#3a3120;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#16171a; --card:#1f2125; --ink:#ecebe6; --muted:#a3a29b; --line:#3a3c42;
+  --accent:#7d9cf0; --ok:#5cc58a; --bad:#ef7b67; --warn:#e2b04f; --thr:#f0995a;
+  --soft:#232a3d; --softok:#1d2f25; --softbad:#3a2320; --softwarn:#3a3120;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:920px;margin:0 auto;padding:32px 16px 80px}
+h1{font-size:30px;margin:0 0 4px}
+h2{font-size:23px;margin:44px 0 8px;padding-top:12px;border-top:2px solid var(--line)}
+h3{font-size:17px;margin:22px 0 6px}
+.sub{color:var(--muted);margin:0 0 20px}
+.muted{color:var(--muted)} .small{font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.grid .card{margin:0}
+.card h4{margin:0 0 6px;font-size:16px}
+.card p,.card li{color:var(--muted);font-size:15px}
+.card ul{margin:0;padding-left:18px}
+ul li{margin:3px 0}
+.tag{display:inline-block;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 8px;border-radius:99px;background:var(--soft);color:var(--accent)}
+.tag.ok{background:var(--softok);color:var(--ok)} .tag.bad{background:var(--softbad);color:var(--bad)} .tag.warn{background:var(--softwarn);color:var(--warn)}
+code{background:var(--soft);padding:1px 5px;border-radius:4px;font-size:.88em;word-break:break-all}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:12.5px;text-transform:uppercase;letter-spacing:.03em}
+svg{width:100%;height:auto;display:block}
+svg text{fill:var(--ink);font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+svg .muted{fill:var(--muted);font-size:11.5px}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
+svg .box{fill:var(--card);stroke:var(--line);stroke-width:1.5}
+svg .blue{fill:var(--soft);stroke:var(--accent);stroke-width:1.5}
+svg .green{fill:var(--softok);stroke:var(--ok);stroke-width:1.5}
+svg .red{fill:var(--softbad);stroke:var(--bad);stroke-width:1.5}
+svg .grey{fill:var(--card);stroke:var(--muted);stroke-width:1.2;stroke-dasharray:4 3}
+svg .arrow{stroke:var(--muted);stroke-width:1.6;fill:none;marker-end:url(#ah)}
+svg .lineok{stroke:var(--ok);stroke-width:2;fill:none}
+svg .linebad{stroke:var(--bad);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.note{border-left:4px solid var(--warn);background:var(--card);padding:10px 14px;border-radius:6px;margin:14px 0}
+.legend{font-size:13px;color:var(--muted);margin:8px 0 0}
+.sim{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:center}
+@media (max-width:640px){.sim{grid-template-columns:1fr}}
+input[type=range]{width:100%}
+.big{font-size:30px;font-weight:700;line-height:1.1}
+.pill{display:inline-block;font-weight:700;font-size:13px;padding:3px 10px;border-radius:99px}
+.p-ok{background:var(--softok);color:var(--ok)} .p-watch{background:var(--softwarn);color:var(--warn)}
+.p-thr{background:var(--softwarn);color:var(--thr)} .p-block{background:var(--softbad);color:var(--bad)}
+.bar{position:relative;height:14px;border:1px solid var(--line);border-radius:7px;background:var(--bg);margin:8px 0}
+.bar .band{position:absolute;top:2px;bottom:2px;background:var(--accent);opacity:.35;border-radius:4px}
+.bar .pt{position:absolute;top:-3px;width:3px;height:18px;background:var(--accent)}
+.bar .mk{position:absolute;top:-4px;width:1px;height:20px;background:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+<h1>Traffic Provenance, explained simply</h1>
+<p class="sub">Did the affiliate's visitors really come from the Google / Meta ads they say they bought? A one-page tour of what we built, with a picture of how the gclid check works.</p>
+
+<div class="card">
+  <h4>In one minute</h4>
+  <ul>
+    <li><b>Problem:</b> an affiliate can send bots or porn traffic and claim it's Google traffic. Google then punishes <b>our</b> GAM account.</li>
+    <li><b>Idea:</b> every Google ad click gets a unique ID, the <code>gclid</code>. Google keeps a list of every gclid it billed. Real visitors carry a gclid that's <b>on that list</b>. Fake ones don't.</li>
+    <li><b>Check:</b> every 5,000 visits per affiliate, compare our gclids with Google's list (Meta: compare counts) and run a few more checks.</li>
+    <li><b>Result:</b> OK / WATCH / THROTTLE / BLOCK. BLOCK is a <b>recommendation</b>: a person reviews it and turns on the kill switch <code>ads:aff:&lt;id&gt; = off</code> by hand (no automatic blocking for now).</li>
+    <li><b>Status:</b> <span class="tag">🕒 logic built + tested locally</span> on branch <code>chandra/traffic-provenance</code>. Not pushed, not live. The Google pipeline (ClickHouse + batch job) runs locally against a fake Google API; no real Google token yet.</li>
+  </ul>
+</div>
+
+<!-- ============ GCLID JOURNEY ============ -->
+<h2>1 · The life of a gclid</h2>
+<p>How one click becomes something we can verify.</p>
+<div class="card scroll">
+<svg viewBox="0 0 880 360" role="img" aria-label="A person clicks a Google ad; Google creates a gclid and records it in the affiliate's account; the browser lands on our site carrying the gclid; we log it; later we read Google's list and match" style="min-width:640px">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="var(--muted)"/></marker>
+  </defs>
+  <!-- step boxes top row -->
+  <rect class="box" x="10" y="30" width="150" height="86" rx="10"/>
+  <text x="85" y="58" text-anchor="middle">① 👤 Person</text>
+  <text class="muted" x="85" y="78" text-anchor="middle">searches "cheap flights"</text>
+  <text class="muted" x="85" y="96" text-anchor="middle">clicks the affiliate's ad</text>
+
+  <path class="arrow" d="M160 73 H200"/>
+
+  <rect class="blue" x="205" y="30" width="200" height="86" rx="10"/>
+  <text x="305" y="58" text-anchor="middle">② Google creates a gclid</text>
+  <text class="mono" x="305" y="80" text-anchor="middle">Cj0KCQiA…x7Qk</text>
+  <text class="muted" x="305" y="98" text-anchor="middle">unique per click, can't be guessed</text>
+
+  <path class="arrow" d="M405 73 H445"/>
+
+  <rect class="box" x="450" y="20" width="420" height="106" rx="10"/>
+  <text x="660" y="44" text-anchor="middle">③ Browser lands on OUR site with it in the URL</text>
+  <text class="mono" x="660" y="68" text-anchor="middle">gamewhame.com/lp?gclid=Cj0KCQiA…x7Qk</text>
+  <text class="mono" x="660" y="86" text-anchor="middle">&amp;aff=42&amp;cid=111&amp;net=g&amp;dev=m</text>
+  <text class="muted" x="660" y="108" text-anchor="middle">cid / net / dev are filled in by Google itself (ValueTrack)</text>
+
+  <!-- down arrows -->
+  <path class="arrow" d="M305 116 V196"/>
+  <path class="arrow" d="M660 126 V196"/>
+
+  <!-- bottom row -->
+  <rect class="blue" x="185" y="200" width="240" height="80" rx="10"/>
+  <text x="305" y="226" text-anchor="middle">④ Google writes it in the</text>
+  <text x="305" y="244" text-anchor="middle">affiliate's ad account</text>
+  <text class="muted" x="305" y="264" text-anchor="middle">"click list" (click_view / ClickStats)</text>
+
+  <rect class="box" x="540" y="200" width="240" height="80" rx="10"/>
+  <text x="660" y="226" text-anchor="middle">⑤ Our IVT script logs it</text>
+  <text class="muted" x="660" y="246" text-anchor="middle">visit id, time, aff, gclid,</text>
+  <text class="muted" x="660" y="262" text-anchor="middle">campaign, network, device</text>
+
+  <path class="arrow" d="M425 240 C470 240 470 320 505 320"/>
+  <path class="arrow" d="M660 280 C660 320 640 320 625 320"/>
+
+  <rect class="green" x="510" y="300" width="110" height="44" rx="10"/>
+  <text x="565" y="327" text-anchor="middle">⑥ Match ✔</text>
+  <text class="muted" x="300" y="330" text-anchor="middle">next day we receive the click list</text>
+  <text class="muted" x="300" y="346" text-anchor="middle">(script push / report / API)</text>
+</svg>
+<p class="legend">A bot can type <code>?gclid=anything</code> into a URL. It <b>can't</b> make Google put that ID in the affiliate's click list. That's the whole trick.</p>
+</div>
+
+<!-- ============ MATCHING ============ -->
+<h2>2 · How the matching works</h2>
+<p>Our visit log on the left, Google's click list on the right. Every gclid ends in exactly one bucket.</p>
+<div class="card scroll">
+<svg viewBox="0 0 880 430" role="img" aria-label="Matching our gclids to Google's list: matched, not found, malformed, not imported yet, iOS braid, and clicks that never landed" style="min-width:640px">
+  <text x="150" y="22" text-anchor="middle" font-weight="600">Our visits (window of 5,000)</text>
+  <text x="730" y="22" text-anchor="middle" font-weight="600">Google's click list (affiliate account)</text>
+
+  <!-- ours -->
+  <rect class="box" x="20" y="40" width="260" height="34" rx="6"/><text class="mono" x="34" y="62">Cj0K…x7Qk</text><text class="muted" x="270" y="62" text-anchor="end">10 Nov 09:14</text>
+  <rect class="box" x="20" y="84" width="260" height="34" rx="6"/><text class="mono" x="34" y="106">Cj0K…mP2a</text><text class="muted" x="270" y="106" text-anchor="end">10 Nov 09:20</text>
+  <rect class="red" x="20" y="128" width="260" height="34" rx="6"/><text class="mono" x="34" y="150">Cj0K…ZZZZ</text><text class="muted" x="270" y="150" text-anchor="end">bot</text>
+  <rect class="red" x="20" y="172" width="260" height="34" rx="6"/><text class="mono" x="34" y="194">{gclid}  /  test</text><text class="muted" x="270" y="194" text-anchor="end">hand-made URL</text>
+  <rect class="grey" x="20" y="216" width="260" height="34" rx="6"/><text class="mono" x="34" y="238">Cj0K…9fQe</text><text class="muted" x="270" y="238" text-anchor="end">today</text>
+  <rect class="grey" x="20" y="260" width="260" height="34" rx="6"/><text class="mono" x="34" y="282">gbraid=0AAA…</text><text class="muted" x="270" y="282" text-anchor="end">iPhone</text>
+  <rect class="grey" x="20" y="304" width="260" height="34" rx="6"/><text class="mono" x="34" y="326">(no click id)</text><text class="muted" x="270" y="326" text-anchor="end">?</text>
+
+  <!-- google -->
+  <rect class="blue" x="600" y="40" width="260" height="34" rx="6"/><text class="mono" x="614" y="62">Cj0K…x7Qk</text><text class="muted" x="850" y="62" text-anchor="end">10 Nov · SEARCH</text>
+  <rect class="blue" x="600" y="84" width="260" height="34" rx="6"/><text class="mono" x="614" y="106">Cj0K…mP2a</text><text class="muted" x="850" y="106" text-anchor="end">10 Nov · SEARCH</text>
+  <rect class="blue" x="600" y="128" width="260" height="34" rx="6"/><text class="mono" x="614" y="150">Cj0K…r81T</text><text class="muted" x="850" y="150" text-anchor="end">never landed</text>
+  <rect class="blue" x="600" y="172" width="260" height="34" rx="6"/><text class="mono" x="614" y="194">Cj0K…aa0P</text><text class="muted" x="850" y="194" text-anchor="end">never landed</text>
+
+  <!-- links -->
+  <path class="lineok" d="M280 57 H600"/><text x="440" y="51" text-anchor="middle" style="fill:var(--ok);font-size:12px">✔ matched</text>
+  <path class="lineok" d="M280 101 H600"/><text x="440" y="95" text-anchor="middle" style="fill:var(--ok);font-size:12px">✔ matched</text>
+  <path class="linebad" d="M280 145 H420"/><text x="430" y="149" style="fill:var(--bad);font-size:12px">✘ not in Google's list → fake</text>
+  <path class="linebad" d="M280 189 H420"/><text x="430" y="193" style="fill:var(--bad);font-size:12px">✘ malformed → forged</text>
+  <text x="300" y="238" class="muted">⏳ day not imported yet → "pending", never counted against them</text>
+  <text x="300" y="282" class="muted">📱 iOS privacy ID → can't match one by one, checked by daily totals</text>
+  <text x="300" y="326" class="muted">❓ no ID on a "Google" visit → mixed-in traffic signal</text>
+
+  <!-- results -->
+  <rect class="box" x="20" y="360" width="840" height="56" rx="10"/>
+  <text x="440" y="384" text-anchor="middle" font-weight="600">match rate = matched ÷ (matched + not found + malformed)</text>
+  <text class="muted" x="440" y="404" text-anchor="middle">pending, iOS and no-ID visits are left out of this number (they have their own checks)</text>
+</svg>
+<p class="legend">Google's list always has a few clicks that never reached us (people closing the tab). That's normal, and a <b>useful tamper check</b>: a partner-sent "click list" with <b>zero</b> such clicks was probably built from our own logs.</p>
+</div>
+
+<h3>Try it: what a fake share does to the verdict</h3>
+<div class="card">
+  <div class="sim">
+    <div>
+      <label class="small muted" for="fake">Share of visits with fake gclids: <b id="fakev">2%</b></label>
+      <input id="fake" type="range" min="0" max="80" value="2" step="1">
+      <label class="small muted" for="n">Visits with a gclid in the window: <b id="nv">4,600</b></label>
+      <input id="n" type="range" min="100" max="10000" value="4600" step="100">
+      <p class="small muted" style="margin:8px 0 0">Same rules as the code: WATCH if the rate is below 95%; THROTTLE if we're 95% sure it's below 90%; BLOCK if 95% sure it's below 75%. Under 200 IDs = no verdict.</p>
+    </div>
+    <div>
+      <div class="small muted">gclid match rate</div>
+      <div class="big" id="rate">98.0%</div>
+      <div class="bar" id="bar"><span class="band" id="band"></span><span class="pt" id="pt"></span>
+        <span class="mk" style="left:75%"></span><span class="mk" style="left:90%"></span><span class="mk" style="left:95%"></span></div>
+      <div class="small muted" id="ci">95% sure it's between …</div>
+      <div style="margin-top:8px">Verdict: <span class="pill p-ok" id="tier">OK</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ OTHER CHECKS ============ -->
+<h2>3 · The other checks</h2>
+<div class="grid">
+  <div class="card"><h4>📊 Visits ÷ clicks</h4><p>Per day: our "Google" visits vs Google's click count. Above 1.05× means extra traffic is being mixed in. Above 1.5× → BLOCK.</p></div>
+  <div class="card"><h4>🔁 Same gclid, many IPs</h4><p>One real click replayed by bots ("click laundering"). Over 2 IPs or 5 hits per ID = reused.</p></div>
+  <div class="card"><h4>🔞 Bad placements</h4><p>Real Google clicks bought on porn sites, junk apps, Search Partners or Display. Caught from Google's network/placement values.</p></div>
+  <div class="card"><h4>⏱️ Timing & device</h4><p>Landing before the click, landing days later, or Google says "desktop" while the browser is a phone.</p></div>
+  <div class="card"><h4>🌙 24/7 traffic</h4><p>People sleep; bot farms don't. A flat hour-of-day curve is flagged.</p></div>
+  <div class="card"><h4>🧾 Report tampering</h4><p>For partner-sent reports: duplicate or malformed IDs, future dates, numbers that copy our counts, or Google values that disagree with our URL.</p></div>
+</div>
+
+<h3>Meta (Facebook / Instagram) is different</h3>
+<div class="card scroll">
+<svg viewBox="0 0 880 150" role="img" aria-label="Meta gives counts per ad per day, not click IDs; we compare our visit count to Meta's link clicks" style="min-width:600px">
+  <text x="10" y="22" font-weight="600">Meta gives no click list, only counts per ad per day → we compare counts</text>
+  <text class="muted" x="10" y="54">Meta link clicks (ad 6001, 10 Nov)</text>
+  <rect x="260" y="40" width="460" height="20" rx="4" fill="var(--soft)" stroke="var(--accent)"/><text x="728" y="55">1,150</text>
+  <text class="muted" x="10" y="88">Our visits — clean</text>
+  <rect x="260" y="74" width="400" height="20" rx="4" fill="var(--softok)" stroke="var(--ok)"/><text x="668" y="89">1,000 ✔ (fewer, some never load)</text>
+  <text class="muted" x="10" y="122">Our visits — injected</text>
+  <rect x="260" y="108" width="560" height="20" rx="4" fill="var(--softbad)" stroke="var(--bad)"/><text x="828" y="123" text-anchor="end" style="fill:var(--bad)">1,400 ✘</text>
+</svg>
+<p class="legend">Also checked: Audience Network share (policy says FB/IG feeds and stories only), unknown ad IDs, and fbclid present/valid/not reused. fbclid can't be looked up, so it's evidence only.</p>
+</div>
+
+<!-- ============ DATA IN ============ -->
+<h2>4 · How we get Google's / Meta's data</h2>
+<p>Official API access may be slow to get, so the logic accepts data from any of these. All of them end up in the same shape.</p>
+<div class="card scroll">
+<table>
+<tr><th>Option (easiest → strongest)</th><th>Platform</th><th>Has gclids?</th><th>Trust</th><th>Partner effort</th></tr>
+<tr><td>CSV upload in a partner page</td><td>Google / Meta</td><td>only if the report has them</td><td><span class="tag warn">weak</span> floor WATCH</td><td>download + upload</td></tr>
+<tr><td>Scheduled e-mail report / Sheets export</td><td>Google / Meta</td><td>usually not (daily totals)</td><td><span class="tag warn">weak</span> floor WATCH</td><td>set up once</td></tr>
+<tr><td><b>Google Ads Script</b> pasted into their account, pushes signed click lists to us</td><td>Google</td><td>✔ yes</td><td><span class="tag">medium</span> floor OK</td><td>paste once, no developer token</td></tr>
+<tr><td><b>Partner-made Meta system-user token</b> (read-only), we pull</td><td>Meta</td><td>– (counts)</td><td><span class="tag ok">strong</span></td><td>create token once</td></tr>
+<tr><td>Our MCC + developer token / BigQuery transfer</td><td>Google</td><td>✔ yes</td><td><span class="tag ok">strong</span></td><td>accept link</td></tr>
+</table>
+<ul class="small muted" style="margin-top:10px">
+  <li><b>Recommended default:</b> Google → Ads Script push; Meta → partner token. Move to MCC + developer token when approved.</li>
+  <li>Self-reported files can prove traffic is <b>bad</b>, never fully prove it's good. They keep a WATCH floor and get spot audits more often (weak 25% / script 10% / API 2% of partners a week).</li>
+  <li>No access at all → at least THROTTLE (reduced ads).</li>
+  <li>Scales to 100+ partners: per-partner keys, staggered sync schedule with retries, one job per affiliate (one failure never blocks the others), and a status table per partner.</li>
+</ul>
+</div>
+
+<!-- ============ DECISION ============ -->
+<h2>5 · From numbers to the kill switch</h2>
+<div class="card scroll">
+<svg viewBox="0 0 880 200" role="img" aria-label="Every 5000 visits a window gets a verdict; the breaker moves up fast and down slowly; BLOCK sets the kill switch" style="min-width:640px">
+  <rect class="box" x="10" y="60" width="170" height="70" rx="10"/>
+  <text x="95" y="88" text-anchor="middle">Window closes</text>
+  <text class="muted" x="95" y="108" text-anchor="middle">5,000 visits or 24h</text>
+  <path class="arrow" d="M180 95 H215"/>
+  <rect class="blue" x="220" y="60" width="190" height="70" rx="10"/>
+  <text x="315" y="88" text-anchor="middle">Verdict + reasons</text>
+  <text class="muted" x="315" y="108" text-anchor="middle">worst check wins</text>
+  <path class="arrow" d="M410 95 H445"/>
+  <rect class="blue" x="450" y="50" width="200" height="90" rx="10"/>
+  <text x="550" y="76" text-anchor="middle">Circuit breaker</text>
+  <text class="muted" x="550" y="96" text-anchor="middle">up fast · down slowly</text>
+  <text class="muted" x="550" y="112" text-anchor="middle">BLOCK = 2 bad windows</text>
+  <text class="muted" x="550" y="128" text-anchor="middle">(or 1 very clear one)</text>
+  <path class="arrow" d="M650 95 H685"/>
+  <rect class="green" x="690" y="10" width="180" height="36" rx="8"/><text x="780" y="33" text-anchor="middle">OK · nothing</text>
+  <rect class="box" x="690" y="54" width="180" height="36" rx="8" style="stroke:var(--warn)"/><text x="780" y="77" text-anchor="middle">WATCH · alert</text>
+  <rect class="box" x="690" y="98" width="180" height="36" rx="8" style="stroke:var(--thr)"/><text x="780" y="121" text-anchor="middle">THROTTLE · fewer ads</text>
+  <rect class="red" x="690" y="142" width="180" height="48" rx="8"/><text x="780" y="162" text-anchor="middle">BLOCK</text><text class="mono" x="780" y="180" text-anchor="middle">review → set by hand</text>
+</svg>
+</div>
+<ul>
+  <li><b>No guessing:</b> under 300 visits, or Google data not in yet → no decision, tier stays as it is.</li>
+  <li><b>Unblock is manual.</b> After 3 clean windows the system says "ready to unblock"; a person decides.</li>
+  <li><b>The code never writes to KV itself.</b> BLOCK lands in a review queue; a person sets the key by hand.</li>
+</ul>
+
+<!-- ============ BATCH JOB ============ -->
+<h2>6 · The daily batch job (Google)</h2>
+<p>Every click Google recorded, every gclid we logged, matched in one database. Runs every 6 hours, one partner at a time.</p>
+<div class="card scroll">
+<svg viewBox="0 0 900 470" role="img" aria-label="Visits flow through the Ad Pass Worker and a queue into ClickHouse; a cron job pulls every Google click into ClickHouse; ClickHouse joins them by gclid; the engine decides; BLOCK goes to a person who sets the kill switch" style="min-width:700px">
+  <!-- lane 1: our visits -->
+  <text class="muted" x="10" y="16">OUR SIDE · all day, live</text>
+  <rect class="box" x="10" y="26" width="150" height="62" rx="10"/><text x="85" y="52" text-anchor="middle">Visitor lands</text><text class="mono" x="85" y="72" text-anchor="middle">?gclid=Cj0K…</text>
+  <path class="arrow" d="M160 57 H195"/>
+  <rect class="box" x="200" y="26" width="170" height="62" rx="10"/><text x="285" y="52" text-anchor="middle">Ad Pass Worker</text><text class="muted" x="285" y="72" text-anchor="middle">logs it, doesn't wait</text>
+  <path class="arrow" d="M370 57 H405"/>
+  <rect class="box" x="410" y="26" width="130" height="62" rx="10"/><text x="475" y="52" text-anchor="middle">Queue</text><text class="muted" x="475" y="72" text-anchor="middle">batches of 100</text>
+  <path class="arrow" d="M540 57 H600 V168"/>
+
+  <!-- lane 2: google -->
+  <text class="muted" x="10" y="130">GOOGLE SIDE · every 6 hours</text>
+  <rect class="box" x="10" y="140" width="150" height="62" rx="10"/><text x="85" y="166" text-anchor="middle">Cron</text><text class="muted" x="85" y="186" text-anchor="middle">1 message / partner</text>
+  <path class="arrow" d="M160 171 H195"/>
+  <rect class="blue" x="200" y="140" width="250" height="62" rx="10"/><text x="325" y="164" text-anchor="middle">Google Ads API (our token)</text><text class="muted" x="325" y="182" text-anchor="middle">every click of yesterday + day before</text><text class="muted" x="325" y="196" text-anchor="middle">+ Google's own click totals</text>
+  <path class="arrow" d="M450 171 H555"/>
+
+  <!-- clickhouse -->
+  <rect class="blue" x="560" y="110" width="330" height="160" rx="12"/>
+  <text x="725" y="136" text-anchor="middle" style="font-weight:700">ClickHouse</text>
+  <text class="mono" x="580" y="162">landings       our visits (gclid)</text>
+  <text class="mono" x="580" y="182">google_clicks  every Google click</text>
+  <text class="mono" x="580" y="202">google_daily   Google's totals</text>
+  <text class="mono" x="580" y="222">google_sync    what synced / failed</text>
+  <text class="muted" x="580" y="250">raw rows kept 90 days</text>
+
+  <path class="arrow" d="M725 270 V305"/>
+  <!-- bottom: decide -->
+  <rect class="blue" x="600" y="310" width="290" height="70" rx="10"/><text x="745" y="334" text-anchor="middle">① Join by gclid + counts</text><text class="muted" x="745" y="352" text-anchor="middle">matched · not found · malformed</text><text class="muted" x="745" y="368" text-anchor="middle">foreign · visits per click · unlanded</text>
+  <path class="arrow" d="M600 345 H565"/>
+  <rect class="box" x="400" y="310" width="160" height="70" rx="10"/><text x="480" y="334" text-anchor="middle">② Engine</text><text class="muted" x="480" y="352" text-anchor="middle">windows · rules</text><text class="muted" x="480" y="368" text-anchor="middle">circuit breaker</text>
+  <path class="arrow" d="M400 345 H365"/>
+  <rect class="box" x="200" y="310" width="160" height="70" rx="10"/><text x="280" y="334" text-anchor="middle">③ D1</text><text class="muted" x="280" y="352" text-anchor="middle">verdicts · cursor</text><text class="muted" x="280" y="368" text-anchor="middle">review queue</text>
+  <path class="arrow" d="M200 345 H165"/>
+  <rect class="red" x="10" y="300" width="150" height="90" rx="10"/><text x="85" y="326" text-anchor="middle">④ Person reviews</text><text class="muted" x="85" y="346" text-anchor="middle">then sets by hand</text><text class="mono" x="85" y="370" text-anchor="middle">ads:aff:13 = off</text>
+
+  <text class="muted" x="10" y="420">• One partner failing (e.g. access revoked) never stops the others. • Re-running a day replaces it: no duplicates.</text>
+  <text class="muted" x="10" y="440">• Only finished windows move the breaker; the next run starts where this one stopped (cursor).</text>
+  <text class="muted" x="10" y="460">• Cost: about 4 Google API requests per account per run, however many clicks there are.</text>
+</svg>
+</div>
+
+<h3 style="margin:18px 0 6px">What the local test run showed</h3>
+<div class="card scroll">
+<table>
+<tr><th>Partner</th><th>Match rate</th><th>Other signals</th><th>Result</th></tr>
+<tr><td>42 · clean</td><td>100%</td><td>~0.96 visits per Google click · 7% of clicks never landed (normal)</td><td><span class="pill p-ok">OK</span></td></tr>
+<tr><td>13 · bot farm</td><td>34%</td><td>3.1 visits per click · flat 24/7 traffic</td><td><span class="pill p-block">BLOCK · review</span></td></tr>
+<tr><td>21 · porn placements</td><td>100%</td><td>clicks are real but come from blocklisted sites/apps</td><td><span class="pill p-block">BLOCK · review</span></td></tr>
+<tr><td>55 · forged / replayed</td><td>100% of the valid ones</td><td>477 malformed gclids · same gclids from many IPs</td><td><span class="pill p-block">BLOCK · review</span></td></tr>
+<tr><td>77 · copied gclids</td><td>0%</td><td>968 <b>foreign</b>: real gclids stolen from another affiliate's account</td><td><span class="pill p-block">BLOCK · review</span></td></tr>
+<tr><td>88 · revoked our access</td><td>–</td><td>Google answered 403; marked "no access"; others unaffected</td><td><span class="pill p-watch">no data</span></td></tr>
+</table>
+<p class="small muted" style="margin:8px 0 0">Local ClickHouse in Docker + a fake Google API. 6 partners, 42k visits, ~3 seconds. No real Google calls.</p>
+</div>
+
+<!-- ============ WHERE ============ -->
+<h2>7 · What exists and where</h2>
+<div class="card scroll">
+<table>
+<tr><th>Piece</th><th>Where</th><th>State</th></tr>
+<tr><td>Matching + verdict logic (pure code)</td><td><code>repo-provenance/provenance/src/</code></td><td><span class="tag">🕒 built locally</span></td></tr>
+<tr><td>Google pipeline: ClickHouse tables, Google Ads client, batch job, review queue</td><td><code>provenance/pipeline/</code> · <code>npm run provenance:local</code></td><td><span class="tag">🕒 built locally</span></td></tr>
+<tr><td>Tests (133, all green; 147 existing still green)</td><td><code>provenance/tests/</code> · <code>npm test</code></td><td><span class="tag">🕒 built locally</span></td></tr>
+<tr><td>Browser lab: 18 scenarios, paste a CSV, 100-partner view</td><td><code>provenance/demo/index.html</code> (open as file)</td><td><span class="tag">🕒 built locally</span></td></tr>
+<tr><td>Full rules, formulas, every reason code</td><td><code>provenance/README.md</code></td><td>doc</td></tr>
+<tr><td>How to get partner access and tokens</td><td><code>provenance/docs/PARTNER_DATA_ACCESS.md</code></td><td>doc</td></tr>
+<tr><td>Real Google token + ClickHouse Cloud, Ads Script, partner upload page</td><td>–</td><td><span class="tag bad">not built</span></td></tr>
+</table>
+<p class="small muted" style="margin:8px 0 0">Branch <code>chandra/traffic-provenance</code>, commits local only. Nothing deployed, no real API calls made.</p>
+</div>
+
+<div class="note"><b>Open questions:</b> THROTTLE needs a new key the Ad Pass reads (proposed <code>adcap:aff:&lt;id&gt;</code>) · thresholds need tuning on real traffic in shadow mode · some Google/Meta API details marked "verify" (e.g. whether UI reports can include gclids, Meta App Review needs).</div>
+</main>
+
+<script>
+(function(){
+  var fake=document.getElementById('fake'), n=document.getElementById('n');
+  function wilson(k,n,z){ if(n<=0) return [0,1]; var p=k/n, z2=z*z, d=1+z2/n, c=(p+z2/(2*n))/d, h=z*Math.sqrt(p*(1-p)/n+z2/(4*n*n))/d; return [Math.max(0,c-h),Math.min(1,c+h)]; }
+  function pct(x){ return (x*100).toFixed(1)+'%'; }
+  function upd(){
+    var f=+fake.value/100, N=+n.value, real=0.99; // ~1% of real IDs miss anyway (data lag, edits)
+    var k=Math.round(N*(1-f)*real), p=k/N, ci=wilson(k,N,1.96);
+    document.getElementById('fakev').textContent=fake.value+'%';
+    document.getElementById('nv').textContent=N.toLocaleString();
+    document.getElementById('rate').textContent=pct(p);
+    document.getElementById('band').style.left=(ci[0]*100)+'%';
+    document.getElementById('band').style.width=Math.max(0.8,(ci[1]-ci[0])*100)+'%';
+    document.getElementById('pt').style.left=(p*100)+'%';
+    document.getElementById('ci').textContent='95% sure it is between '+pct(ci[0])+' and '+pct(ci[1]);
+    var t='OK', c='p-ok';
+    if(N<200){t='NO VERDICT (too few)';c='p-watch';}
+    else if(ci[1]<0.75){t=ci[1]<0.5?'BLOCK (hard, immediate)':'BLOCK';c='p-block';}
+    else if(ci[1]<0.90){t='THROTTLE';c='p-thr';}
+    else if(p<0.95){t='WATCH';c='p-watch';}
+    var el=document.getElementById('tier'); el.textContent=t; el.className='pill '+c;
+  }
+  fake.addEventListener('input',upd); n.addEventListener('input',upd); upd();
+})();
+</script>
+</body>
+</html>
