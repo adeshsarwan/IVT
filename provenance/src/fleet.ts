@@ -13,7 +13,7 @@ import {
   type AffiliatePlatformData, type AffiliateResult, type BreakerState, type ConnectorType, type GooglePlatformData,
   type MetaPlatformData, type ProvenanceReport, type RawRequest, type Tier, type WindowResult,
 } from './types';
-import { fnv1a, round } from './util';
+import { hash01, round } from './util';
 
 export interface ConnectorConfig {
   id: string;
@@ -83,7 +83,7 @@ export function planSyncJobs(connectors: ConnectorConfig[], states: Record<strin
     if (c.enabled === false || CONNECTOR_MODE[c.type] !== 'pull') continue;
     const st = states[c.id] ?? { consecutiveFailures: 0 };
     if (st.consecutiveFailures >= opts.disableAfterFailures) { parked.push(c.id); continue; }
-    const jitter = fnv1a(c.id) % Math.max(1, opts.jitterMs);
+    const jitter = Math.floor(hash01(c.id) * Math.max(1, opts.jitterMs));
     let dueAt: number;
     let kind: SyncJob['kind'];
     if (st.lastAttemptAt == null) { dueAt = now - opts.jitterMs + jitter; kind = 'first'; }
@@ -265,7 +265,7 @@ export function partnerStatus(
  *  with the data the partner sent. */
 export function spotAuditPlan(affs: { aff: string; strength: Strength | 'none' }[], period: string, salt: string, cfg: ProvenanceConfig = makeConfig()) {
   return affs
-    .filter(({ aff, strength }) => fnv1a(`${salt}|${period}|${aff}`) / 0x1_0000_0000 < cfg.connectors.auditRates[strength])
+    .filter(({ aff, strength }) => hash01(`${salt}|${period}|${aff}`) < cfg.connectors.auditRates[strength])
     .map((a) => a.aff).sort();
 }
 

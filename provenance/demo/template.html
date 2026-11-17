@@ -123,6 +123,24 @@ details summary{cursor:pointer;color:var(--accent);font-size:14px}
   </div>
 </div>
 
+<div class="card">
+  <h4>4 · Paste a partner report <span class="muted small">(runs the real connector parsers)</span></h4>
+  <div class="row">
+    <label>Format<select id="paste-kind">
+      <option value="google_click_csv">Google click report (with GCLID column)</option>
+      <option value="google_daily_csv">Google UI report (Day × Campaign × Clicks, no gclid)</option>
+      <option value="meta_csv">Meta Ads Manager export (Day × Ad ID × Link clicks)</option></select></label>
+    <label>Arrived via<select id="paste-type">
+      <option value="csv_upload">csv_upload (weak)</option><option value="email_report">email_report (weak)</option><option value="sheet_export">sheet_export (weak)</option>
+      <option value="ads_script_push">ads_script_push (medium)</option><option value="api_partner_token">api_partner_token (strong)</option><option value="api_mcc">api_mcc (strong)</option></select></label>
+    <label>Affiliate<input id="paste-aff" value="42" size="6"></label>
+    <label>Account time zone<input id="paste-tz" value="America/New_York" size="18"></label>
+  </div>
+  <textarea id="paste-text" rows="6" spellcheck="false" style="margin-top:8px" placeholder="GCLID,Day,Campaign ID,Ad group ID,Device,Network&#10;Cj0KCQiA…,2026-11-10,111,11101,Mobile phones,Google search"></textarea>
+  <div class="row" style="margin-top:6px"><button class="primary" id="paste-run">Parse &amp; use as platform data</button><span class="small" id="paste-out"></span></div>
+  <p class="small muted">Replaces that affiliate's Google or Meta data in the current fixture. Header rows, "Total" rows, quoted numbers ("1,204") and UI labels ("Mobile phones", "Search partners") are handled.</p>
+</div>
+
 <div class="legend">
   <span><span class="pill ok">OK</span> no action</span>
   <span><span class="pill watch">WATCH</span> alert + review</span>

@@ -12,10 +12,20 @@ export function fnv1a(s: string): number {
   return h >>> 0;
 }
 
+/** FNV-1a followed by the murmur3 32-bit finalizer, mapped to [0, 1). FNV alone mixes the last
+ *  characters poorly, so ids like p001, p002 … would land close together. */
+export function hash01(s: string): number {
+  let h = fnv1a(s);
+  h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 0x1_0000_0000;
+}
+
 /** Deterministic sampling: the same id + salt is always in or always out. */
 export function inSample(id: string, salt: string, rate: number): boolean {
   if (rate >= 1) return true;
-  return fnv1a(`${salt}:${id}`) / 0x1_0000_0000 < rate;
+  return hash01(`${salt}:${id}`) < rate;
 }
 
 /** Wilson score interval for k successes out of n. Returns [lo, hi] in [0, 1]. */
