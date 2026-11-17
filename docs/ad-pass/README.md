@@ -100,9 +100,46 @@ startAds(approval.targeting);               // your own ad units, slots and floo
 | Server refused (bad, expired or stolen pass, kill switch) | yes, got 403 |
 | Server unreachable or too slow | yes, failed |
 
+## Which sites may show ads
+
+Three layers decide it. The first two already existed in the IVT; the KV kill switches are new with the Ad Pass.
+
+| Layer | Where | Existed before? | Checked on | Effect when it says no |
+|---|---|---|---|---|
+| Domain allowlist | `ALLOWED_ORIGINS` var in `wrangler.jsonc` | yes | `/v1/admit` and `/v1/ad-check` | 403 for anything from that domain |
+| Site registry | D1 table `sites` (`site_key`, `hostname`, `enabled`, `mode`) | yes | `/v1/admit` only | visit refused, so no pass and no ads (IVT stops too) |
+| Ad kill switches | KV `IVT_CONFIG`: `ads:global`, `ads:site:<siteKey>`, `ads:aff:<id>` | **new** | `/v1/admit` and every `/v1/ad-check` | no pass / 403. Only ads stop; IVT keeps running |
+
+### KV kill switch keys
+
+| Key | Turns off ads for | Example |
+|---|---|---|
+| `ads:global` | every site | `ads:global` = `off` |
+| `ads:site:<siteKey>` | one site (the `site_key` from the `sites` table) | `ads:site:gamewhame.com` = `off` |
+| `ads:aff:<id>` | one affiliate, on every site | `ads:aff:42` = `off` |
+
+- **Values:** a missing key or `on` means allowed. Any other value (`off`, `0`, anything) means ads off.
+- **KV errors:** if KV can't be read, ads are off. The design always fails closed.
+- **Same KV as before:** these keys live in the existing `IVT_CONFIG` namespace, which so far only cached IPinfo lookups. No new Cloudflare resource is needed.
+- **Speed:** a change applies to new visits and to open pages on their next re-check, usually within seconds and at most about a minute (KV propagation).
+- **Ads only:** turning a switch off doesn't touch IVT scoring or telemetry.
+
+### Which one to use
+
+| Goal | Do this | How fast |
+|---|---|---|
+| Stop ads on a site now | `ads:site:<siteKey>` = `off` | seconds to a minute, including open pages |
+| Stop one affiliate everywhere | `ads:aff:<id>` = `off` | seconds to a minute |
+| Stop all ads (emergency) | `ads:global` = `off` | seconds to a minute |
+| Take a site out of the IVT completely | D1 `sites.enabled = 0` **and** `ads:site:<siteKey>` = `off` | new visits right away. Without the KV switch, passes already issued keep working until they expire (up to 30 min), because `/v1/ad-check` does not read D1 |
+| Stop a domain calling us at all | remove it from `ALLOWED_ORIGINS` | next deploy |
+
+To add a new site, register it in `sites` and add its domains (with and without `www.`) to
+`ALLOWED_ORIGINS`, as before. It needs no KV entry; with no kill switch key set, ads are allowed.
+
 ## Running it
 
-**Kill switches** are checked on every call. A missing key or `on` means allowed; anything else means off. They take effect within seconds to a minute.
+**Kill switches** (see [above](#kv-kill-switch-keys)) are checked on every call.
 
 ```bash
 npx wrangler kv key put --binding IVT_CONFIG "ads:global" off --remote              # all ads
