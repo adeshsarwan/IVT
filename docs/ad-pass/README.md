@@ -118,7 +118,63 @@ Three layers decide it. The first two already existed in the IVT; the KV kill sw
 | `ads:site:<siteKey>` | one site (the `site_key` from the `sites` table) | `ads:site:gamewhame.com` = `off` |
 | `ads:aff:<id>` | one affiliate, on every site | `ads:aff:42` = `off` |
 
-- **Values:** a missing key or `on` means allowed. Any other value (`off`, `0`, anything) means ads off.
+### What each value means
+
+| State of the key | Example | Ads? |
+|---|---|---|
+| Key not set | (no `ads:site:gamewhame.com` key) | ✅ allowed (the normal state) |
+| `on` (any case, spaces trimmed) | `on`, `ON`, ` on ` | ✅ allowed |
+| `off` | `off` | ❌ off |
+| Any other value | `0`, `false`, `disabled`, `no`, empty string | ❌ off (anything that isn't `on` turns ads off) |
+| KV can't be read | Cloudflare KV outage or error | ❌ off (fails closed) |
+
+Several switches can apply to one visit. Ads run only if **every** one that applies allows them:
+
+| `ads:global` | `ads:site:gamewhame.com` | `ads:aff:42` | Visit to gamewhame.com with `?aff=42` | Visit to gamewhame.com, no `?aff=` |
+|---|---|---|---|---|
+| not set | not set | not set | ✅ ads | ✅ ads |
+| `off` | not set | not set | ❌ | ❌ |
+| not set | `off` | not set | ❌ | ❌ |
+| not set | not set | `off` | ❌ | ✅ ads (no affiliate, so `ads:aff:*` doesn't apply) |
+| `on` | `off` | not set | ❌ (the site switch still wins) | ❌ |
+| not set | `on` | `off` | ❌ | ✅ ads |
+
+### Samples
+
+Run these from the repo folder. Add `--remote` to act on production KV; without it, wrangler uses a local copy.
+
+```bash
+# Turn ads off
+npx wrangler kv key put --binding IVT_CONFIG "ads:global" off --remote
+npx wrangler kv key put --binding IVT_CONFIG "ads:site:gamewhame.com" off --remote
+npx wrangler kv key put --binding IVT_CONFIG "ads:aff:42" off --remote
+```
+
+```bash
+# Turn ads back on: delete the key (preferred) or set it to "on"
+npx wrangler kv key delete --binding IVT_CONFIG "ads:site:gamewhame.com" --remote
+npx wrangler kv key put --binding IVT_CONFIG "ads:site:gamewhame.com" on --remote
+```
+
+```bash
+# See what is set
+npx wrangler kv key list --binding IVT_CONFIG --prefix "ads:" --remote
+npx wrangler kv key get --binding IVT_CONFIG "ads:site:gamewhame.com" --remote
+```
+
+Typical uses:
+
+| Situation | Command |
+|---|---|
+| GAM flagged gamewhame.com, stop it now | `kv key put ... "ads:site:gamewhame.com" off` |
+| Affiliate 42 is sending bot traffic | `kv key put ... "ads:aff:42" off` |
+| Something is wrong everywhere | `kv key put ... "ads:global" off` |
+| Issue resolved | `kv key delete ...` on the same key |
+| Check what is currently switched off | `kv key list ... --prefix "ads:"` |
+
+- Use the exact `site_key` from the `sites` table, e.g. `gamewhame.com`, not `www.gamewhame.com` or a full URL.
+- `ads:aff:` uses the same id as `?aff=`.
+- Keep a note of who flipped what and why. The audit table for that is proposed in [DB_CHANGES.md](DB_CHANGES.md) §2C.
 - **KV errors:** if KV can't be read, ads are off. The design always fails closed.
 - **Same KV as before:** these keys live in the existing `IVT_CONFIG` namespace, which so far only cached IPinfo lookups. No new Cloudflare resource is needed.
 - **Speed:** a change applies to new visits and to open pages on their next re-check, usually within seconds and at most about a minute (KV propagation).
@@ -139,14 +195,7 @@ To add a new site, register it in `sites` and add its domains (with and without 
 
 ## Running it
 
-**Kill switches** (see [above](#kv-kill-switch-keys)) are checked on every call.
-
-```bash
-npx wrangler kv key put --binding IVT_CONFIG "ads:global" off --remote              # all ads
-npx wrangler kv key put --binding IVT_CONFIG "ads:site:gamewhame.com" off --remote  # one site
-npx wrangler kv key put --binding IVT_CONFIG "ads:aff:42" off --remote              # one affiliate
-npx wrangler kv key delete --binding IVT_CONFIG "ads:aff:42" --remote               # back on
-```
+**Kill switches** are checked on every call. Commands and examples are in [Samples](#samples) above.
 
 **Rollout**
 
