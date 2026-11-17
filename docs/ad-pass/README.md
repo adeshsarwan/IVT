@@ -3,9 +3,12 @@
 The Ad Pass blocks ads unless the IVT server has approved the visit.
 
 - `ivt.js` checks the visitor. If the visit is approved, the server hands out a short-lived signed **Ad Pass**.
-- The ad script (Price Optimiser, a GPT tag, anything that loads ads) trades the pass for that
-  visit's ad config. **No pass → no config → the ad script never starts.**
-- Every failure means no ads: blocked visitor, server down or slow, edited or stolen pass, kill switch on, missing config.
+- The ad script (Price Optimiser, or any script that loads ads) asks the server to confirm the pass
+  before it does anything. **No confirmation → the ad script never starts.**
+- Every failure means no ads: blocked visitor, server down or slow, edited or stolen pass, kill switch on.
+
+The server does **not** manage ad units. Ad units, slots, sizes and floors live in the ad script.
+The server only answers "ads allowed for this visit?" and adds a few key-values for GAM reporting.
 
 Design and threat model: [DESIGN.md](DESIGN.md) · Pending DB work: [DB_CHANGES.md](DB_CHANGES.md)
 
@@ -15,9 +18,9 @@ Design and threat model: [DESIGN.md](DESIGN.md) · Pending DB work: [DB_CHANGES.
 |---|---|---|
 | `ivt.js` | `src/sdk/ivt.ts` → `/v1/ivt.js` | Existing IVT sensor. Now also passes along `?aff=` and exposes the pass. Knows nothing about ads. |
 | `POST /v1/admit` | `src/worker.ts` | Existing admission. Adds `adPass` to the response when ads are allowed. |
-| `POST /v1/ad-units` | `src/adpass.ts` | Checks the pass and returns the ad config, or an empty 403. |
-| `ad-gate.js` | [`docs/ad-pass/ad-gate.js`](ad-gate.js) | ~50 lines the ad script runs first. Returns the config or `null`. |
-| Ad config + kill switches | KV `IVT_CONFIG` | Per-site ad units per affiliate; on/off switches. |
+| `POST /v1/ad-check` | `src/adpass.ts` | Confirms the pass: returns `{ ok: true, targeting }`, or an empty 403. |
+| `ad-gate.js` | [`docs/ad-pass/ad-gate.js`](ad-gate.js) | ~50 lines the ad script runs first. Returns the approval or `null`. |
+| Kill switches | KV `IVT_CONFIG` | Turn ads off for everything, one site, or one affiliate. |
 
 ## Setup
 
@@ -33,35 +36,13 @@ Vars in `wrangler.jsonc`:
 |---|---|---|
 | `AD_PASS_MODE` | `off` | `off` = no passes at all · `observe` = every admitted visitor gets ads, bots tagged `ivt_e=0` · `enforce` = only approved visits get ads |
 | `AD_PASS_TTL_SECONDS` | `1800` | Pass lifetime (30 min), allowed range 15–3600 |
+| `AD_PASS_REQUIRE_AFFILIATE` | `off` | `on` = visits without `?aff=` get no ads |
 | `AD_PASS_SINGLE_USE` | `off` | `on` = each pass works once (uses the ReplayGuard Durable Object) |
 | `AD_PASS_KID` / `AD_PASS_POLICY_VERSION` | `k1` / `1` | Key id and policy version. Bumping the policy version invalidates every outstanding pass |
 
-### 2. Ad config for each site (KV)
+Nothing else needs to be set up on the server: no ad config and no database tables.
 
-Key `adunits:site:<siteKey>`, for example `adunits:site:gamewhame.com`:
-
-```json
-{
-  "v": 2,
-  "networkCode": "1234567",
-  "affiliates": {
-    "42": { "slots": [{ "div": "top", "path": "/1234567/aff_42/top", "sizes": [[300, 250]] }] },
-    "77": { "slots": [{ "div": "top", "path": "/1234567/aff_77/top", "sizes": [[300, 250]] }],
-            "targeting": { "camp": "spring" } }
-  },
-  "house": { "slots": [{ "div": "top", "path": "/1234567/house/top", "sizes": [[300, 250]] }] }
-}
-```
-
-```bash
-npx wrangler kv key put --binding IVT_CONFIG "adunits:site:gamewhame.com" --path ./gamewhame.json --remote
-```
-
-- Give each affiliate its own ad units in GAM, so any abuse can be traced to one affiliate.
-- `house` is optional. It covers visits that arrive without `?aff=`. Leave it out and those visits get no ads.
-- A broken or missing config means no ads for that site. There is no fallback.
-
-### 3. The page
+### 2. The page
 
 ```html
 <script src="https://ivt.thebesads.com/v1/ivt.js" data-auto-init="true"
@@ -69,48 +50,54 @@ npx wrangler kv key put --binding IVT_CONFIG "adunits:site:gamewhame.com" --path
 <script src="https://<price-optimiser-script>.js" async></script>
 ```
 
+- The site must be registered in `sites` and listed in `ALLOWED_ORIGINS` (as today).
 - Affiliate links carry `?aff=<id>`, e.g. `https://gamewhame.com/word-sprint?aff=42`.
-  `ivt.js` remembers the id for the rest of the visit in that tab.
-- Keep ad unit IDs out of the page HTML. They come only from the server.
+  - `ivt.js` remembers the id for the rest of the visit in that tab.
+  - The server signs it into the pass, so it can't be changed later.
+  - Any well-formed id (`A–Z a–z 0–9 _ -`, up to 32 characters) is accepted.
+  - A malformed id means no ads.
+  - No id gives `aff=none`, unless `AD_PASS_REQUIRE_AFFILIATE=on`.
 
-### 4. The ad script (Price Optimiser or any other)
+### 3. The ad script (Price Optimiser or any other)
 
 Paste [`ad-gate.js`](ad-gate.js) at the top of the ad script, then:
 
 ```js
-const config = await thebesAdGate();        // { endpoint, timeoutMs } optional
-if (!config) return;                        // stop: no GPT, no bids, nothing
-startAds(config);                           // only now load GPT / run the auction
+const approval = await thebesAdGate();      // { endpoint, timeoutMs } optional
+if (!approval) return;                      // stop: no GPT, no bids, nothing
+startAds(approval.targeting);               // your own ad units, slots and floors, plus these key-values
 ```
 
-`config` looks like this:
+`approval` looks like this:
 
 ```json
 {
-  "gpt": "https://securepubads.g.doubleclick.net/tag/js/gpt.js",
-  "networkCode": "1234567",
-  "slots": [{ "div": "top", "path": "/1234567/aff_42/top", "sizes": [[300, 250]] }],
-  "targeting": { "camp": "spring", "aff": "42", "ivt_k": "21984a12d2", "ivt_t": "ca859808fdda", "ivt_e": "1" }
+  "ok": true,
+  "expiresAt": 1763352000,
+  "targeting": { "aff": "42", "ivt_k": "21984a12d2", "ivt_t": "ca859808fdda", "ivt_e": "1" }
 }
 ```
 
 - Set **every** key-value in `targeting` on GPT (and pass it to bidders):
-  - `aff`: the affiliate, or `house` for visits without one
+  - `aff`: the affiliate from `?aff=`, or `none`
   - `ivt_k`: changes daily; used to spot ads loaded without the gate
   - `ivt_t`: identifies this visit's pass
   - `ivt_e`: `1` = clean visit, `0` = would have been blocked (only seen in observe mode)
+- **Pick ad units however you like** (per site, per affiliate, using `approval.targeting.aff`).
+  Using separate GAM ad units per affiliate makes abuse traceable and easy to cut off.
 - **Long visits:** run `thebesAdGate()` again before adding new slots (infinite scroll, page
   changes without a reload), or every few minutes before refreshing. If it returns `null`, stop
   refreshing. This is how a kill switch reaches pages that are already open.
+  `expiresAt` (unix seconds) is when the pass runs out.
 - The gate waits up to 8 s by default (`timeoutMs`). On timeout it returns `null`; never load ads anyway.
 
 `thebesAdGate()` returns `null` when:
 
-| Situation | Calls `/v1/ad-units`? |
+| Situation | Calls `/v1/ad-check`? |
 |---|---|
 | `ivt.js` missing, failed or too slow | no |
 | Visit not approved, so no pass | no |
-| Server refused (bad, expired or stolen pass, kill switch, config) | yes, got 403 |
+| Server refused (bad, expired or stolen pass, kill switch) | yes, got 403 |
 | Server unreachable or too slow | yes, failed |
 
 ## Running it
@@ -127,9 +114,8 @@ npx wrangler kv key delete --binding IVT_CONFIG "ads:aff:42" --remote           
 **Rollout**
 
 1. Set the secret, keep `AD_PASS_MODE=off`, deploy. Nothing changes.
-2. Write the ad config for one site and add `?aff=` to that site's affiliate links.
-3. Make the ad script start through `ad-gate.js`. Set `AD_PASS_MODE=observe` and compare GAM
-   numbers (`ivt_e`, `ivt_k` coverage) for a few days.
+2. Add `?aff=` to affiliate links. Make the Price Optimiser script start through `ad-gate.js`.
+3. Set `AD_PASS_MODE=observe` and compare GAM numbers (`ivt_e`, `ivt_k` coverage) for a few days.
 4. Set `AD_PASS_MODE=enforce`. Move the other sites over one at a time.
 
 **Spotting bypass:** in GAM, report impressions by `aff` and `ivt_k`. Impressions with no `ivt_k`
@@ -143,6 +129,9 @@ or an old one come from ads loaded without the gate. Turn on that affiliate's ki
   add a Content-Security-Policy that allows only the exact approved ad script. The browser then
   refuses edited copies. Price Optimiser can also check the pass on its own servers. Both are
   covered in [DESIGN.md](DESIGN.md) §8.
+- `?aff=` comes from the URL, so it can be typed by anyone. Mislabelled traffic sends revenue
+  to the other affiliate's reporting, so there's little reason to fake it. Signed tracking links
+  can replace it later.
 
 ## Testing
 
@@ -154,5 +143,5 @@ npm run build:demo
 
 - `npm run check` type-checks the code; `npm test` runs the unit tests (all offline).
 - `npm run build:demo` builds the interactive demo at `.wrangler/demo/ad-pass-demo.html`.
-- The demo runs the real Worker, `ivt.js` and `ad-gate.js` in your browser.
+- The demo runs the real Worker, `ivt.js` and `ad-gate.js` in your browser, with a stand-in for the ad script.
 - Open it over `http://*.localhost` or HTTPS; it doesn't work from a `file://` path.

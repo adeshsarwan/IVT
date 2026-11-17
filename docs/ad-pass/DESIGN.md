@@ -17,38 +17,35 @@ Page (no ad unit IDs in the HTML):
 
 Browser                                    Worker
 ivt.js  ── POST /v1/admit ─────────────▶   score visit (unchanged)
-                                           AD_PASS_MODE gate + eligibility
-                                           kill switches + site ad config (KV)
+                                           AD_PASS_MODE gate + eligibility + kill switches
         ◀── {..., adPass?} ──────────────   pass only if all OK
-ad stack (gate) ─ POST /v1/ad-units ────▶   origin allowlist, signature, kid, expiry,
+ad stack (gate) ─ POST /v1/ad-check ────▶   origin allowlist, signature, kid, expiry,
                   {adPass}                 policy version, origin, IP /24|/64 + UA binding
-                                           kill switches + config re-checked
+                                           kill switches re-checked
                                            optional single-use claim (off by default)
         ◀── 403 (empty) ─────────────────   any failure
-        ◀── {gpt, networkCode, slots, targeting} (no-store)
-ad stack: starts only now (GPT, bids, slots, key-values)
+        ◀── {ok, expiresAt, targeting} ──   approved (no-store)
+ad stack: starts only now with its OWN ad units, plus the targeting key-values
 ```
 
+- **The Worker does not manage ad units.** Ad units, slots, sizes and floors belong to the ad
+  stack (Price Optimiser). The Worker only says yes or no and returns audit key-values.
 - `ivt.js` only exposes the opaque `adPass` string on its admission result
-  (`window.__THEBES_IVT_INIT__`). It contains no GAM URL, ad unit path or slot logic (asserted by
+  (`window.__THEBES_IVT_INIT__`). It contains no GAM or ad knowledge (asserted by
   `tests/ivt-adpass.test.ts`). It also sends `?aff=` (see section 5).
-- The ad stack (Price Optimiser, or any script that loads GPT) runs the reference gate
-  [`ad-gate.js`](ad-gate.js) first and starts only if the gate returns a config. Every failure,
-  timeout or refusal returns `null`: no GPT, no bids. No fallback, no cache.
-- The pass gates the **config fetch**. Refreshes of slots already defined are up to the ad stack;
-  to honour kill switches on long visits, run the gate again before adding slots or every few
-  minutes, and stop refreshing on `null`. The server re-checks expiry, binding, kill switches and
-  config on every call. Every full page load runs `ivt.js` again and gets a fresh pass.
-- The GPT URL in the response is a server constant; the KV config cannot change it.
-- The Ad Pass project's own GAM loader (`ads.js`) was removed: the ad stack owns rendering.
+- The ad stack runs the reference gate [`ad-gate.js`](ad-gate.js) first and starts only if the
+  gate returns an approval. Every failure, timeout or refusal returns `null`: no GPT, no bids.
+- Refreshes of slots already on the page are up to the ad stack. To honour kill switches on long
+  visits, it runs the gate again before adding slots or every few minutes, and stops refreshing on
+  `null`. Every full page load runs `ivt.js` again and gets a fresh pass.
 
 ## 2. Modes (`AD_PASS_MODE`)
 
-| Value | `/v1/admit` | `/v1/ad-units` |
+| Value | `/v1/admit` | `/v1/ad-check` |
 |---|---|---|
 | `off` (default, release value) | never returns `adPass`; response identical to before | always 403 |
-| `observe` | pass to **every** admitted session that clears kill switches + config; claim `e` = would-be eligibility | serves config; targeting `ivt_e=0/1` |
-| `enforce` | pass **only** when eligible (and kill switches + config OK) | serves config |
+| `observe` | pass to **every** admitted session that clears the kill switches; claim `e` = would-be eligibility | approves; targeting `ivt_e=0/1` |
+| `enforce` | pass **only** when eligible (and kill switches allow) | approves |
 
 Eligibility = `CLEAN` + `WOULD_PASS` when the site is in IVT shadow mode (the would-be decision),
 or `CLEAN` + `PASS` when the site is in IVT enforce mode. The existing runtime capability,
@@ -74,7 +71,7 @@ revenue by `ivt_e`; switch to `enforce` to actually gate.
 | `iat`, `exp` | unix seconds; `exp - iat` = `AD_PASS_TTL_SECONDS` (default 1800 = 30 min, clamped 15–3600) |
 | `n` | 128-bit random nonce (single-use key, `ivt_t` source) |
 | `pv` | `AD_PASS_POLICY_VERSION`; bump it to invalidate every outstanding pass |
-| `aff` | affiliate id from `?aff=`, validated against the site config (null = house units) |
+| `aff` | affiliate id from `?aff=` (format-checked; null = none) |
 | `e` | 1 = eligible at issuance (always 1 in `enforce`) |
 | `ih`, `uh` | keyed hashes (16 bytes) of the client IP prefix (IPv4 /24, IPv6 /64, from `CF-Connecting-IP`) and the `User-Agent` header |
 
@@ -85,18 +82,18 @@ The pass contains no raw IP/UA and no ad information.
 Default: **30 minute pass, reusable, fully stateless** (no D1, no KV writes, no Durable Object).
 
 Why 30 minutes: the goal is "no ads without `ivt.js`", not one-time tickets. The pass must outlive
-long sessions in single-page apps / infinite scroll, where new slots need config again. 30 minutes
+long sessions in single-page apps / infinite scroll, where new slots trigger a re-check. 30 minutes
 matches the usual analytics session length. Longer (up to 60, the clamp) keeps a session
 monetised longer after telemetry might have flagged it, and gives a harvested pass more time on the
 same network + browser.
 
 Reuse is limited to the same origin, IP prefix and User-Agent, and every redemption re-checks
-kill switches and config, so flipping a switch stops new ad loads immediately regardless of TTL.
+the kill switches, so flipping a switch stops new ad loads immediately regardless of TTL.
 
-`AD_PASS_SINGLE_USE=on` (optional): `/v1/ad-units` claims `adpass:<nonce>` in the existing
+`AD_PASS_SINGLE_USE=on` (optional): `/v1/ad-check` claims `adpass:<nonce>` in the existing
 `ReplayGuard` Durable Object (`POST /claim`; first claim wins, storage wiped by an alarm at
 `exp + 60s`). Costs one DO round trip per redemption, denies if the DO is unreachable, and means
-late placeholders get no ads (the second redemption is refused).
+later re-checks are refused (so late slots get no ads).
 
 ## 5. KV keys (`IVT_CONFIG`)
 
@@ -116,46 +113,20 @@ npx wrangler kv key put --binding IVT_CONFIG "ads:site:gamewhame.com" off --remo
 npx wrangler kv key delete --binding IVT_CONFIG "ads:site:gamewhame.com" --remote
 ```
 
-### Ad-unit config `adunits:site:<siteKey>`
-
-One document per site. A site can have many affiliates; each gets its own ad units.
-
-```json
-{
-  "v": 2,
-  "networkCode": "1234567",
-  "affiliates": {
-    "42": { "slots": [ { "div": "top", "path": "/1234567/aff_42/top", "sizes": [[300, 250], [336, 280]] },
-                       { "div": "mid", "path": "/1234567/aff_42/mid", "sizes": [[300, 250]] } ],
-            "targeting": { "camp": "spring" } },
-    "77": { "slots": [ { "div": "top", "path": "/1234567/aff_77/top", "sizes": [[300, 250]] } ] }
-  },
-  "house": { "slots": [ { "div": "top", "path": "/1234567/house/top", "sizes": [[300, 250]] } ] }
-}
-```
-
-Strict schema (`parseAdUnitConfig`): unknown fields rejected; affiliate ids `[A-Za-z0-9_-]{1,32}`
-(max 1000 per site); per set 1–20 slots with unique `div`; `path` must start with
-`/<networkCode>/`; sizes are integer pairs 1–2000; targeting keys `[a-z0-9_]{1,20}`, values
-`[A-Za-z0-9_.:-]{1,40}` (or arrays of up to 10); `aff`, `ivt_k`, `ivt_t`, `ivt_e` are reserved
-(the server sets them). Missing or invalid config → no pass and 403. There is **no global/fallback
-config**. The config is read at admission too, so sites without one never cost a pass.
-
 ### Affiliate attribution (`?aff=`)
 
 - Affiliates link to the site with `?aff=<id>`. `ivt.js` sends it in `attribution.aff` and keeps
   it in `sessionStorage` (`thebes:aff`) so later pages of the same visit in that tab keep it;
   a new landing with a different `?aff=` replaces it.
-- The server checks the id against `affiliates` in the site config and signs it into the pass
-  (`aff` claim), so it cannot be changed afterwards.
-- Unknown or malformed id → no pass. No id → the site's `house` units if configured, otherwise no
-  pass (strict default). House traffic gets `aff=house` and no affiliate kill switch.
+- The server format-checks the id (`[A-Za-z0-9_-]{1,32}`) and signs it into the pass (`aff`
+  claim), so it cannot be changed afterwards. There is no affiliate registry on the server.
+- Malformed id → no pass. No id → `aff=none`, or no pass when `AD_PASS_REQUIRE_AFFILIATE=on`.
 - `ads:aff:<id>` is checked for that affiliate on both calls.
-- `/v1/ad-units` returns that affiliate's slots and sets `aff=<id>` (or `house`) in targeting.
+- `/v1/ad-check` returns `aff=<id>` (or `none`) in targeting; the ad stack picks ad units with it.
 
 ## 6. Audit key-values (stateless)
 
-Returned in `/v1/ad-units` `targeting` and set on GPT:
+Returned in `/v1/ad-check` `targeting`; the ad stack sets them on GPT and passes them to bidders:
 
 - `ivt_k` = first 5 bytes (10 hex) of `HMAC(AD_PASS_SECRET, "ivt_k.<YYYY-MM-DD UTC>.<siteKey>")`.
   Recomputable later for any date/site; no storage.
@@ -178,6 +149,7 @@ key; rotate `AD_PASS_SECRET` at UTC midnight, or check both keys for the rotatio
 | `AD_PASS_MODE` | var | `off` / `observe` / `enforce` |
 | `AD_PASS_TTL_SECONDS` | var | default 1800 (30 min), clamped 15–3600 |
 | `AD_PASS_SINGLE_USE` | var | `off` (default) / `on` |
+| `AD_PASS_REQUIRE_AFFILIATE` | var | `off` (default) / `on` = no `?aff=` means no pass |
 | `AD_PASS_POLICY_VERSION` | var | default `1` |
 
 ```bash
@@ -197,18 +169,19 @@ Rotation: set `AD_PASS_SECRET_PREVIOUS` = old secret, `AD_PASS_PREVIOUS_KID` = o
 | Pass from site A used on site B or another origin | origin mismatch → 403 |
 | Pass harvested by a bot farm and replayed elsewhere | IP prefix / UA binding → 403 |
 | Same pass reused by the same visitor | allowed within TTL (by design); 403 with `AD_PASS_SINGLE_USE=on` |
-| Kill switch or config change after admission | re-checked at redemption → 403 |
+| Kill switch flipped after admission | re-checked on every ad-check → 403 |
 | KV/DO outage | deny |
-| Config tampering in KV pointing to a foreign script | GPT URL is a server constant; config schema is strict |
 | Error-detail probing | every failure is an empty 403 |
-| Affiliate puts another affiliate's id on its traffic | allowed (URL parameter). Revenue lands in the other affiliate's ad units, so the sender is not paid; it only matters if a killed affiliate tries to keep traffic monetised, and shows up as a spike in the other affiliate's numbers. Upgrade path: signed tracking links issued by the Worker |
+| Affiliate puts another affiliate's id on its traffic | allowed (URL parameter). With per-affiliate ad units in the ad stack, the revenue lands with the other affiliate, so the sender is not paid; it only matters if a killed affiliate tries to keep traffic monetised, and shows up as a spike in the other affiliate's numbers. Upgrade path: signed tracking links issued by the Worker |
 
-**Honest limit.** Once an approved visitor receives the config, the ad unit paths are visible in
-the browser. A partner can hard-code GPT with those paths for blocked traffic; JavaScript alone
-cannot stop that. Mitigations: per-affiliate ad units (`/net/aff_42/...`) make abuse attributable
-and one-click revocable in GAM; `ivt_k` exposes impressions served without the gate (missing or
-stale value) in GAM reports; impressions per affiliate should be ≤ passes redeemed × slots. To make
-bypass physically impossible, add the edge add-on (Worker strips partner ad tags + CSP).
+**Honest limit.** Whoever controls the page HTML can load the ad stack without the gate (a
+downloaded copy with the gate removed, or GPT hard-coded with ad unit paths seen in the browser).
+That code never calls the Worker, so the Worker cannot block it. Mitigations: per-affiliate ad
+units make abuse attributable and one-click revocable in GAM; `ivt_k` exposes impressions served
+without the gate (missing or stale value) in GAM reports; Price Optimiser can require a valid pass
+on its own servers. To make bypass impossible in the browser, serve the sites through our
+Cloudflare and add a Content-Security-Policy that allows only the exact approved ad script
+(pinned by hash), so edited copies are refused.
 
 Also: IP binding means a visitor whose IP prefix changes within the TTL (rare mobile handover)
 gets no ads for that pageview.
@@ -216,13 +189,12 @@ gets no ads for that pageview.
 ## 9. Rollout
 
 1. `wrangler secret put AD_PASS_SECRET` (keep `AD_PASS_MODE=off`). Deploy. No behaviour change.
-2. Create per-affiliate ad units in GAM; write `adunits:site:<siteKey>` for one site; make every
-   affiliate link carry `?aff=<id>` (decide per site whether organic traffic gets `house` units).
-3. Set `AD_PASS_MODE=observe`. On that site: remove hard-coded ad unit IDs and make the ad stack
-   start through `ad-gate.js`. Watch fill, `ivt_e` split and `ivt_k` coverage in GAM.
+2. Make every affiliate link carry `?aff=<id>`; decide whether visits without one get ads
+   (`AD_PASS_REQUIRE_AFFILIATE`).
+3. Make the ad stack start through `ad-gate.js` and set the returned key-values. Set
+   `AD_PASS_MODE=observe`. Watch fill, `ivt_e` split and `ivt_k` coverage in GAM.
 4. Add the daily GAM report job for missing/stale `ivt_k` (not in this repo yet).
-5. Set `AD_PASS_MODE=enforce` once the eligibility policy is trusted. Roll site by site
-   (sites without config get no ads, so onboard config before moving a site's tags).
+5. Set `AD_PASS_MODE=enforce` once the eligibility policy is trusted. Roll site by site.
 6. Practise the kill switches (`ads:site:*`, `ads:global`).
 
 ## 10. Pending database changes
@@ -234,6 +206,6 @@ Attribution, audit and GAM reconciliation tables are proposed (not applied) in
 
 `npm run build:demo` writes `.wrangler/demo/ad-pass-demo.html`: one self-contained page that runs
 the real Worker, `ivt.js` and `ad-gate.js` in the browser (in-memory KV/D1/DO, demo keys, an ad
-stack stand-in, no real ad requests). It covers each visitor scenario, the mode switch, kill switches, config states and
-late (infinite-scroll) slots. Serve it over `http://*.localhost` or HTTPS: Web Crypto needs a
+stack stand-in with its own slots, no real ad requests). It covers each visitor scenario, the
+mode switch, kill switches, affiliates and late (infinite-scroll) slots. Serve it over `http://*.localhost` or HTTPS: Web Crypto needs a
 secure context. The output is never written to `public/`, so it cannot ship with the Worker.

@@ -24,7 +24,7 @@ Assume an attacker can read, modify, replay, or replace `ivt.js`. No client-prov
 
 - `src/sdk/ivt.ts` - browser sensor/loader
 - `src/worker.ts` - Cloudflare Worker API
-- `src/adpass.ts` - Ad Pass issuance and `POST /v1/ad-units`
+- `src/adpass.ts` - Ad Pass issuance and `POST /v1/ad-check` (yes/no for the ad stack; no ad units)
 - `docs/ad-pass/` - Ad Pass: how to integrate (`README.md`), reference gate (`ad-gate.js`), design, pending DB changes
 - `migrations/0001_initial.sql` - D1 schema
 - `wrangler.jsonc` - Worker bindings; production IDs intentionally left as placeholders
@@ -53,7 +53,7 @@ IPinfo evidence in risk scores, classifications, or admission decisions.
 - Raw click IDs should not be exposed in dashboards; store encrypted values only where later reconciliation requires recovery, otherwise keyed hashes.
 - Runtime capabilities are short-lived, origin/site-bound, admission-bound, random, and single-use.
 - Detailed rejection reason codes remain server-side.
-- Ads load only via a valid Ad Pass redeemed at `/v1/ad-units`; every failure means no ads (`docs/ad-pass/README.md`).
+- The ad stack (e.g. Price Optimiser) starts only after `/v1/ad-check` confirms a valid Ad Pass; every failure means no ads (`docs/ad-pass/README.md`).
 
 ## Status
 

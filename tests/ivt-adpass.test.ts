@@ -63,14 +63,14 @@ it('ivt.js sends ?aff= and keeps it for later pages in the same tab', async () =
 });
 
 it('ivt.js bundle stays free of GAM / ad-unit knowledge', () => {
-  for (const needle of ['doubleclick', 'googletag', 'gpt.js', 'ad-units', 'defineSlot', 'data-ad-slot']) {
+  for (const needle of ['doubleclick', 'googletag', 'gpt.js', 'ad-check', 'defineSlot', 'data-ad-slot']) {
     assert.ok(!ivtJs.includes(needle), `ivt.js must not contain ${needle}`);
   }
 });
 
 // ---------- reference gate (docs/ad-pass/ad-gate.js) ----------
 
-type Reply = 'ok' | '403' | 'throw' | 'hang';
+type Reply = 'ok' | '403' | 'throw' | 'hang' | 'bad';
 function gate(opts: { admission?: 'none' | 'reject' | 'hang' | 'late' | object; reply?: Reply; timeoutMs?: number }) {
   const listeners: Record<string, Array<() => void>> = {};
   const window: any = {
@@ -90,7 +90,8 @@ function gate(opts: { admission?: 'none' | 'reject' | 'hang' | 'late' | object; 
       if (reply === 'throw') throw new TypeError('network');
       if (reply === 'hang') return new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(new Error('aborted'))));
       if (reply === '403') return { ok: false, status: 403, json: async () => null };
-      return { ok: true, json: async () => ({ gpt: 'x', networkCode: '1', slots: [{ div: 'top' }], targeting: { aff: '42' } }) };
+      if (reply === 'bad') return { ok: true, json: async () => ({ ok: false }) };
+      return { ok: true, json: async () => ({ ok: true, expiresAt: 1, targeting: { aff: '42', ivt_k: 'k' } }) };
     },
   };
   runInNewContext(gateJs, context);
@@ -99,12 +100,13 @@ function gate(opts: { admission?: 'none' | 'reject' | 'hang' | 'late' | object; 
   return { run, calls, fireInit };
 }
 
-it('ad-gate.js: valid pass returns the server config', async () => {
+it('ad-gate.js: valid pass returns the approval with key-values', async () => {
   const g = gate({});
-  const config = await g.run();
-  assert.equal(config.targeting.aff, '42');
+  const approval = await g.run();
+  assert.equal(approval.ok, true);
+  assert.equal(approval.targeting.aff, '42');
   assert.equal(g.calls.length, 1);
-  assert.equal(g.calls[0].url, 'https://ivt.thebesads.com/v1/ad-units');
+  assert.equal(g.calls[0].url, 'https://ivt.thebesads.com/v1/ad-check');
   assert.deepEqual(g.calls[0].body, { adPass: 'k1.p.s' });
   assert.equal(g.calls[0].credentials, 'omit');
   assert.equal(g.calls[0].cache, 'no-store');
@@ -127,6 +129,7 @@ for (const [label, opts, calls] of [
   ['server refused', { reply: '403' }, 1],
   ['server unreachable', { reply: 'throw' }, 1],
   ['server too slow', { reply: 'hang' }, 1],
+  ['unexpected response body', { reply: 'bad' }, 1],
 ] as const) it(`ad-gate.js: ${label} -> null (start no ads)`, async () => {
   const g = gate(opts as any);
   assert.equal(await g.run(), null);

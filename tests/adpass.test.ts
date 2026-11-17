@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import worker, { type Env } from '../src/worker';
-import { dailyAuditKey, ipPrefix, maybeIssueAdPass, parseAdUnitConfig, passAuditTag } from '../src/adpass';
+import { dailyAuditKey, ipPrefix, maybeIssueAdPass, passAuditTag } from '../src/adpass';
 
 const config = JSON.parse(readFileSync('wrangler.jsonc', 'utf8'));
 const SECRET = 's'.repeat(40);
@@ -13,26 +13,9 @@ const sites = [
   { id: 1, site_key: 'gamewhame.com', hostname: 'gamewhame.com', enabled: 1, mode: 'shadow' },
   { id: 2, site_key: 'jobsqualified.com', hostname: 'jobsqualified.com', enabled: 1, mode: 'shadow' },
 ];
-const unitSet = (nc: string, aff: string) => ({
-  slots: [
-    { div: 'top', path: `/${nc}/aff_${aff}/top`, sizes: [[300, 250], [336, 280]] },
-    { div: 'mid', path: `/${nc}/aff_${aff}/mid`, sizes: [[300, 250]] },
-  ],
-  targeting: { camp: 'spring' },
-});
-const adConfig = (networkCode = '1234567', opts: { affiliates?: string[]; house?: boolean } = {}) => ({
-  v: 2, networkCode,
-  affiliates: Object.fromEntries((opts.affiliates ?? ['42', '77']).map((a) => [a, unitSet(networkCode, a)])),
-  ...(opts.house ? { house: unitSet(networkCode, 'house') } : {}),
-});
-
 type Opts = { vars?: Record<string, string | undefined>; kv?: Record<string, string>; kvThrows?: boolean; guardThrows?: boolean };
 function harness(opts: Opts = {}) {
-  const kv = new Map<string, string>(Object.entries({
-    'adunits:site:gamewhame.com': JSON.stringify(adConfig()),
-    'adunits:site:jobsqualified.com': JSON.stringify(adConfig('7654321', { affiliates: [], house: true })),
-    ...(opts.kv || {}),
-  }));
+  const kv = new Map<string, string>(Object.entries(opts.kv || {}));
   const state = { kvThrows: !!opts.kvThrows, guardThrows: !!opts.guardThrows, claims: new Set<string>() };
   const env = {
     ...config.vars,
@@ -82,8 +65,8 @@ async function admit(h: ReturnType<typeof harness>, c: Client = {}) {
   assert.equal(res.status, 200);
   return res.json() as Promise<any>;
 }
-async function adUnits(h: ReturnType<typeof harness>, adPass: unknown, c: Client = {}) {
-  return worker.fetch(new Request('https://ivt.thebesads.com/v1/ad-units', {
+async function adCheck(h: ReturnType<typeof harness>, adPass: unknown, c: Client = {}) {
+  return worker.fetch(new Request('https://ivt.thebesads.com/v1/ad-check', {
     method: 'POST',
     headers: { origin: c.origin || 'https://gamewhame.com', 'content-type': 'application/json', 'CF-Connecting-IP': c.ip || IP, 'User-Agent': c.ua || UA },
     body: JSON.stringify({ adPass }),
@@ -97,7 +80,7 @@ async function denied(res: Response) {
 const claimsOf = (pass: string) => JSON.parse(Buffer.from(pass.split('.')[1], 'base64url').toString());
 
 describe('ad pass: valid flow', () => {
-  it('eligible admission gets a pass that unlocks the site ad-unit config', async () => {
+  it('eligible admission gets a pass; ad-check approves it with audit key-values only', async () => {
     const h = harness();
     const body = await admit(h);
     assert.equal(body.status, 'ADMITTED');
@@ -115,16 +98,16 @@ describe('ad pass: valid flow', () => {
     assert.equal(claims.exp - claims.iat, 1800);
     assert.ok(!body.adPass.includes(IP) && !JSON.stringify(claims).includes('203.0.113'));
 
-    const res = await adUnits(h, body.adPass);
+    const res = await adCheck(h, body.adPass);
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('cache-control'), 'no-store, private');
     assert.equal(res.headers.get('access-control-allow-origin'), 'https://gamewhame.com');
     const units: any = await res.json();
-    assert.equal(units.gpt, 'https://securepubads.g.doubleclick.net/tag/js/gpt.js');
-    assert.equal(units.networkCode, '1234567');
-    assert.deepEqual(units.slots, adConfig().affiliates['42'].slots);
+    assert.deepEqual(Object.keys(units).sort(), ['expiresAt', 'ok', 'targeting'], 'no ad units, slots or GPT URL');
+    assert.equal(units.ok, true);
+    assert.equal(units.expiresAt, claims.exp);
+    assert.deepEqual(Object.keys(units.targeting).sort(), ['aff', 'ivt_e', 'ivt_k', 'ivt_t']);
     assert.equal(units.targeting.aff, '42');
-    assert.equal(units.targeting.camp, 'spring');
     assert.equal(units.targeting.ivt_e, '1');
     assert.equal(units.targeting.ivt_k, await dailyAuditKey(SECRET, 'gamewhame.com'));
     assert.match(units.targeting.ivt_k, /^[a-f0-9]{10}$/);
@@ -147,13 +130,13 @@ describe('ad pass: valid flow', () => {
 });
 
 describe('ad pass: issuance is gated', () => {
-  it('AD_PASS_MODE off (release default) issues nothing and ad-units always denies', async () => {
+  it('AD_PASS_MODE off (release default) issues nothing and ad-check always denies', async () => {
     assert.equal(config.vars.AD_PASS_MODE, 'off');
     const h = harness({ vars: { AD_PASS_MODE: 'off' } });
     const body = await admit(h);
     assert.equal(body.adPass, undefined);
     const live = await admit(harness());
-    await denied(await adUnits(h, live.adPass));
+    await denied(await adCheck(h, live.adPass));
   });
   it('unknown mode value behaves as off', async () => {
     assert.equal((await admit(harness({ vars: { AD_PASS_MODE: 'yes' } }))).adPass, undefined);
@@ -171,7 +154,7 @@ describe('ad pass: issuance is gated', () => {
     const h = harness({ vars: { AD_PASS_MODE: 'observe' } });
     const body = await admit(h, { browser: { ua: UA, webdriver: true } });
     assert.equal(claimsOf(body.adPass).e, 0);
-    const units: any = await (await adUnits(h, body.adPass)).json();
+    const units: any = await (await adCheck(h, body.adPass)).json();
     assert.equal(units.targeting.ivt_e, '0');
   });
   it('missing or short AD_PASS_SECRET issues nothing', async () => {
@@ -182,7 +165,7 @@ describe('ad pass: issuance is gated', () => {
     const h = harness();
     const body = await admit(h);
     (h.env as any).IVT_HASH_SECRET = 'rotated';
-    assert.equal((await adUnits(h, body.adPass)).status, 200);
+    assert.equal((await adCheck(h, body.adPass)).status, 200);
   });
   it('missing client IP or User-Agent issues nothing', async () => {
     const h = harness();
@@ -201,25 +184,25 @@ describe('ad pass: token verification', () => {
     const [kid, payload, sig] = pass.split('.');
     const claims = claimsOf(pass);
     const forged = Buffer.from(JSON.stringify({ ...claims, sk: 'jobsqualified.com' })).toString('base64url');
-    await denied(await adUnits(h, `${kid}.${forged}.${sig}`));
-    await denied(await adUnits(h, `${kid}.${payload}.${sig.slice(0, -2)}AA`));
-    await denied(await adUnits(h, `${kid}.${payload}`));
-    await denied(await adUnits(h, 12345));
-    await denied(await adUnits(h, 'x'.repeat(5000)));
+    await denied(await adCheck(h, `${kid}.${forged}.${sig}`));
+    await denied(await adCheck(h, `${kid}.${payload}.${sig.slice(0, -2)}AA`));
+    await denied(await adCheck(h, `${kid}.${payload}`));
+    await denied(await adCheck(h, 12345));
+    await denied(await adCheck(h, 'x'.repeat(5000)));
   });
   it('wrong or unknown kid is rejected', async () => {
     const h = harness();
     const pass: string = (await admit(h)).adPass;
-    await denied(await adUnits(h, 'k9' + pass.slice(2)));
+    await denied(await adCheck(h, 'k9' + pass.slice(2)));
   });
   it('key rotation: previous kid accepted while configured, rejected once removed', async () => {
     const old = harness({ vars: { AD_PASS_KID: 'k1', AD_PASS_SECRET: OLD_SECRET } });
     const pass: string = (await admit(old)).adPass;
     const rotated = harness({ vars: { AD_PASS_KID: 'k2', AD_PASS_SECRET: SECRET, AD_PASS_PREVIOUS_KID: 'k1', AD_PASS_SECRET_PREVIOUS: OLD_SECRET } });
-    assert.equal((await adUnits(rotated, pass)).status, 200);
+    assert.equal((await adCheck(rotated, pass)).status, 200);
     assert.equal((await admit(rotated)).adPass.split('.')[0], 'k2');
     const retired = harness({ vars: { AD_PASS_KID: 'k2', AD_PASS_SECRET: SECRET } });
-    await denied(await adUnits(retired, pass));
+    await denied(await adCheck(retired, pass));
   });
   it('expired pass is rejected', async () => {
     const h = harness();
@@ -229,45 +212,45 @@ describe('ad pass: token verification', () => {
       nowMs: Date.now() - 1801_000,
     });
     assert.ok(pass);
-    await denied(await adUnits(h, pass));
+    await denied(await adCheck(h, pass));
   });
   it('policy version change invalidates outstanding passes', async () => {
     const h = harness();
     const pass = (await admit(h)).adPass;
     (h.env as any).AD_PASS_POLICY_VERSION = '2';
-    await denied(await adUnits(h, pass));
+    await denied(await adCheck(h, pass));
   });
   it('wrong origin (www vs apex) is rejected', async () => {
     const h = harness();
     const pass = (await admit(h)).adPass;
-    await denied(await adUnits(h, pass, { origin: 'https://www.gamewhame.com' }));
+    await denied(await adCheck(h, pass, { origin: 'https://www.gamewhame.com' }));
   });
   it('cross-site: a gamewhame pass cannot be redeemed from jobsqualified', async () => {
     const h = harness();
     const pass = (await admit(h)).adPass;
-    await denied(await adUnits(h, pass, { origin: 'https://jobsqualified.com' }));
+    await denied(await adCheck(h, pass, { origin: 'https://jobsqualified.com' }));
   });
   it('unlisted origin is rejected without CORS headers', async () => {
     const h = harness();
     const pass = (await admit(h)).adPass;
-    const res = await adUnits(h, pass, { origin: 'https://evil.example' });
+    const res = await adCheck(h, pass, { origin: 'https://evil.example' });
     await denied(res);
     assert.equal(res.headers.get('access-control-allow-origin'), null);
   });
   it('IP binding: same /24 accepted, different /24 rejected', async () => {
     const h = harness();
-    assert.equal((await adUnits(h, (await admit(h)).adPass, { ip: '203.0.113.200' })).status, 200);
-    await denied(await adUnits(h, (await admit(h)).adPass, { ip: '203.0.114.7' }));
+    assert.equal((await adCheck(h, (await admit(h)).adPass, { ip: '203.0.113.200' })).status, 200);
+    await denied(await adCheck(h, (await admit(h)).adPass, { ip: '203.0.114.7' }));
   });
   it('IPv6 binding: same /64 accepted, different /64 rejected', async () => {
     const h = harness();
     const v6 = '2001:db8:1:2:aaaa::1';
-    assert.equal((await adUnits(h, (await admit(h, { ip: v6 })).adPass, { ip: '2001:db8:1:2:ffff:1:2:3' })).status, 200);
-    await denied(await adUnits(h, (await admit(h, { ip: v6 })).adPass, { ip: '2001:db8:1:3::1' }));
+    assert.equal((await adCheck(h, (await admit(h, { ip: v6 })).adPass, { ip: '2001:db8:1:2:ffff:1:2:3' })).status, 200);
+    await denied(await adCheck(h, (await admit(h, { ip: v6 })).adPass, { ip: '2001:db8:1:3::1' }));
   });
   it('User-Agent binding: different UA rejected', async () => {
     const h = harness();
-    await denied(await adUnits(h, (await admit(h)).adPass, { ua: 'curl/8.0' }));
+    await denied(await adCheck(h, (await admit(h)).adPass, { ua: 'curl/8.0' }));
   });
 });
 
@@ -279,40 +262,40 @@ describe('ad pass: single use', () => {
   it('replay is rejected when AD_PASS_SINGLE_USE=on', async () => {
     const h = harness({ vars: { AD_PASS_SINGLE_USE: 'on' } });
     const pass = (await admit(h)).adPass;
-    assert.equal((await adUnits(h, pass)).status, 200);
-    await denied(await adUnits(h, pass));
+    assert.equal((await adCheck(h, pass)).status, 200);
+    await denied(await adCheck(h, pass));
   });
   it('default (stateless) mode accepts reuse within TTL from the same IP+UA only', async () => {
     const h = harness({ vars: { AD_PASS_SINGLE_USE: undefined } });
     const pass = (await admit(h)).adPass;
-    assert.equal((await adUnits(h, pass)).status, 200);
-    assert.equal((await adUnits(h, pass)).status, 200);
-    await denied(await adUnits(h, pass, { ip: '198.51.100.1' }));
+    assert.equal((await adCheck(h, pass)).status, 200);
+    assert.equal((await adCheck(h, pass)).status, 200);
+    await denied(await adCheck(h, pass, { ip: '198.51.100.1' }));
   });
   it('stateless mode never calls the Durable Object', async () => {
     const h = harness({ vars: { AD_PASS_SINGLE_USE: 'off' } });
     const pass = (await admit(h)).adPass;
     h.state.guardThrows = true;
-    assert.equal((await adUnits(h, pass)).status, 200);
+    assert.equal((await adCheck(h, pass)).status, 200);
   });
   it('replay guard unreachable denies when single use is on', async () => {
     const h = harness({ vars: { AD_PASS_SINGLE_USE: 'on' } });
     const pass = (await admit(h)).adPass;
     h.state.guardThrows = true;
-    await denied(await adUnits(h, pass));
+    await denied(await adCheck(h, pass));
   });
 });
 
-describe('ad pass: kill switches and KV config', () => {
+describe('ad pass: kill switches', () => {
   for (const key of ['ads:global', 'ads:site:gamewhame.com', 'ads:aff:42']) {
     it(`${key}=off at admission issues no pass`, async () => {
       assert.equal((await admit(harness({ kv: { [key]: 'off' } }))).adPass, undefined);
     });
-    it(`${key} flipped off between admit and ad-units denies`, async () => {
+    it(`${key} flipped off between admit and ad-check denies`, async () => {
       const h = harness();
       const pass = (await admit(h)).adPass;
       h.kv.set(key, 'off');
-      await denied(await adUnits(h, pass));
+      await denied(await adCheck(h, pass));
     });
   }
   it('explicit "on" allows; any other value disables', async () => {
@@ -322,38 +305,16 @@ describe('ad pass: kill switches and KV config', () => {
   it('other site kill switch does not affect this site', async () => {
     assert.ok((await admit(harness({ kv: { 'ads:site:jobsqualified.com': 'off' } }))).adPass);
   });
-  it('missing ad-unit config issues no pass (no global fallback)', async () => {
-    const h = harness({ kv: { 'adunits:global': JSON.stringify(adConfig()) } });
-    h.kv.delete('adunits:site:gamewhame.com');
-    assert.equal((await admit(h)).adPass, undefined);
-  });
-  for (const [label, raw] of [
-    ['invalid JSON', '{nope'],
-    ['unknown field', JSON.stringify({ ...adConfig(), gpt: 'https://evil.example/x.js' })],
-    ['slot path outside network', JSON.stringify({ ...adConfig(), affiliates: { '42': { slots: [{ div: 'top', path: '/999/x', sizes: [[300, 250]] }] } } })],
-    ['reserved targeting key ivt_k', JSON.stringify({ ...adConfig(), affiliates: { '42': { ...unitSet('1234567', '42'), targeting: { ivt_k: 'forged' } } } })],
-    ['reserved targeting key aff', JSON.stringify({ ...adConfig(), affiliates: { '42': { ...unitSet('1234567', '42'), targeting: { aff: '77' } } } })],
-    ['no slots', JSON.stringify({ ...adConfig(), affiliates: { '42': { slots: [] } } })],
-    ['bad size', JSON.stringify({ ...adConfig(), affiliates: { '42': { slots: [{ div: 'top', path: '/1234567/x', sizes: [[0, 250]] }] } } })],
-    ['old v1 shape', JSON.stringify({ v: 1, networkCode: '1234567', affiliate: '42', slots: unitSet('1234567', '42').slots })],
-    ['bad affiliate id', JSON.stringify({ ...adConfig(), affiliates: { ...adConfig().affiliates, 'bad id!': unitSet('1234567', 'x') } })],
-    ['no affiliates and no house', JSON.stringify({ v: 2, networkCode: '1234567', affiliates: {} })],
-  ]) it(`malformed config (${label}) issues no pass`, async () => {
-    assert.equal((await admit(harness({ kv: { 'adunits:site:gamewhame.com': raw } }))).adPass, undefined);
-  });
-  it('config removed or broken between admit and ad-units denies', async () => {
+  it('no ad-unit config is needed or read', async () => {
+    const reads: string[] = [];
     const h = harness();
+    const get = (h.env as any).IVT_CONFIG.get;
+    (h.env as any).IVT_CONFIG.get = async (k: string) => { reads.push(k); return get(k); };
     const pass = (await admit(h)).adPass;
-    h.kv.set('adunits:site:gamewhame.com', '{broken');
-    await denied(await adUnits(h, pass));
+    assert.equal((await adCheck(h, pass)).status, 200);
+    assert.ok(reads.every((k) => k.startsWith('ads:')), reads.join(','));
   });
-  it('affiliate removed from the site config between admit and ad-units denies', async () => {
-    const h = harness();
-    const pass = (await admit(h)).adPass;
-    h.kv.set('adunits:site:gamewhame.com', JSON.stringify(adConfig('1234567', { affiliates: ['77'] })));
-    await denied(await adUnits(h, pass));
-  });
-  it('KV unreachable: admission still succeeds without a pass; ad-units denies', async () => {
+  it('KV unreachable: admission still succeeds without a pass; ad-check denies', async () => {
     const h = harness({ kvThrows: true });
     const body = await admit(h);
     assert.equal(body.status, 'ADMITTED');
@@ -361,42 +322,34 @@ describe('ad pass: kill switches and KV config', () => {
     const live = harness();
     const pass = (await admit(live)).adPass;
     live.state.kvThrows = true;
-    await denied(await adUnits(live, pass));
-  });
-  it('parseAdUnitConfig accepts the documented example', () => {
-    assert.equal(parseAdUnitConfig(adConfig())?.affiliates['42'].slots.length, 2);
+    await denied(await adCheck(live, pass));
   });
 });
 
 describe('ad pass: affiliates (several per site)', () => {
-  it('each affiliate gets its own ad units and aff targeting', async () => {
+  it('each affiliate is carried into the pass and the aff key-value', async () => {
     const h = harness();
-    const body = await admit(h, { aff: '77' });
-    assert.equal(claimsOf(body.adPass).aff, '77');
-    const units: any = await (await adUnits(h, body.adPass)).json();
-    assert.deepEqual(units.slots.map((s: any) => s.path), ['/1234567/aff_77/top', '/1234567/aff_77/mid']);
-    assert.equal(units.targeting.aff, '77');
+    for (const aff of ['42', '77', '999']) {
+      const body = await admit(h, { aff });
+      assert.equal(claimsOf(body.adPass).aff, aff);
+      const approval: any = await (await adCheck(h, body.adPass)).json();
+      assert.equal(approval.targeting.aff, aff);
+    }
   });
-  for (const [label, aff] of [['unknown affiliate', '999'], ['malformed affiliate', 'x y'], ['reserved-looking id "house"', 'house']] as const) {
-    it(`${label} gets no pass`, async () => {
-      assert.equal((await admit(harness(), { aff })).adPass, undefined);
-    });
-  }
-  it('no ?aff= and no house units: no pass (strict default)', async () => {
-    assert.equal((await admit(harness(), { aff: null })).adPass, undefined);
+  it('malformed affiliate gets no pass', async () => {
+    assert.equal((await admit(harness(), { aff: 'x y' })).adPass, undefined);
   });
-  it('no ?aff= with house units: house ad units, aff=house', async () => {
-    const h = harness({ kv: { 'adunits:site:gamewhame.com': JSON.stringify(adConfig('1234567', { house: true })) } });
+  it('no ?aff=: pass with aff=none (default)', async () => {
+    const h = harness();
     const body = await admit(h, { aff: null });
     assert.equal(claimsOf(body.adPass).aff, null);
-    const units: any = await (await adUnits(h, body.adPass)).json();
-    assert.equal(units.targeting.aff, 'house');
-    assert.equal(units.slots[0].path, '/1234567/aff_house/top');
+    const approval: any = await (await adCheck(h, body.adPass)).json();
+    assert.equal(approval.targeting.aff, 'none');
   });
-  it('a site configured with house units only rejects affiliate ids it does not list', async () => {
-    const h = harness();
-    assert.ok((await admit(h, { origin: 'https://jobsqualified.com', siteKey: 'jobsqualified.com', aff: null })).adPass);
-    assert.equal((await admit(h, { origin: 'https://jobsqualified.com', siteKey: 'jobsqualified.com', aff: '42' })).adPass, undefined);
+  it('AD_PASS_REQUIRE_AFFILIATE=on: no ?aff= means no pass', async () => {
+    const h = harness({ vars: { AD_PASS_REQUIRE_AFFILIATE: 'on' } });
+    assert.equal((await admit(h, { aff: null })).adPass, undefined);
+    assert.ok((await admit(h, { aff: '42' })).adPass);
   });
   it('affiliate kill switch only affects that affiliate', async () => {
     const h = harness({ kv: { 'ads:aff:77': 'off' } });
@@ -408,15 +361,15 @@ describe('ad pass: affiliates (several per site)', () => {
     const p42 = (await admit(h, { aff: '42' })).adPass;
     const p77 = (await admit(h, { aff: '77' })).adPass;
     h.kv.set('ads:aff:77', 'off');
-    assert.equal((await adUnits(h, p42)).status, 200);
-    await denied(await adUnits(h, p77));
+    assert.equal((await adCheck(h, p42)).status, 200);
+    await denied(await adCheck(h, p77));
   });
   it('affiliate cannot be switched inside a pass', async () => {
     const h = harness();
     const pass: string = (await admit(h, { aff: '42' })).adPass;
     const [kid, , sig] = pass.split('.');
     const forged = Buffer.from(JSON.stringify({ ...claimsOf(pass), aff: '77' })).toString('base64url');
-    await denied(await adUnits(h, `${kid}.${forged}.${sig}`));
+    await denied(await adCheck(h, `${kid}.${forged}.${sig}`));
   });
 });
 

@@ -14,7 +14,7 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "run_worker_first": ["/v1/admit", "/v1/ad-units", "/v1/runtime/*", "/v2/telemetry", "/health"]
+    "run_worker_first": ["/v1/admit", "/v1/ad-check", "/v1/runtime/*", "/v2/telemetry", "/health"]
   },
   "d1_databases": [
     {
@@ -58,6 +58,7 @@
     "AD_PASS_TTL_SECONDS": "1800",
     "AD_PASS_SINGLE_USE": "off",
     "AD_PASS_KID": "k1",
-    "AD_PASS_POLICY_VERSION": "1"
+    "AD_PASS_POLICY_VERSION": "1",
+    "AD_PASS_REQUIRE_AFFILIATE": "off"
   }
 }

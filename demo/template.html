@@ -146,10 +146,10 @@ button:focus-visible, select:focus-visible, .choice:has(input:focus-visible) { o
             <option value="42">aff=42</option>
             <option value="77">aff=77</option>
             <option value="">none (organic or direct visit)</option>
-            <option value="999">aff=999 (not set up for this site)</option>
+            <option value="bad id!">aff=bad id! (malformed)</option>
           </select>
         </div>
-        <p class="note">Each affiliate gets its own ad units (<code>/1234567/aff_42/…</code>) and its own <code>aff=</code> key-value in GAM. ivt.js remembers the id for later pages in the same tab.</p>
+        <p class="note">The server signs the affiliate into the pass and returns it as the <code>aff=</code> key-value for GAM. Ad units stay in the ad script. ivt.js remembers the id for later pages in the same tab.</p>
       </section>
 
       <section class="panel" aria-labelledby="h-server">
@@ -168,17 +168,9 @@ button:focus-visible, select:focus-visible, .choice:has(input:focus-visible) { o
             <label class="check"><input type="checkbox" id="kill-aff42">ads:aff:42 = off</label>
             <label class="check"><input type="checkbox" id="kill-aff77">ads:aff:77 = off</label>
           </div>
-          <div class="field"><span>Ad config (KV)</span>
-            <select id="config" aria-label="Ad config state">
-              <option value="ok">affiliates 42 + 77</option>
-              <option value="house">affiliates 42 + 77, plus house units</option>
-              <option value="missing">missing</option>
-              <option value="broken">malformed JSON</option>
-            </select>
-          </div>
         </div>
         <div class="actions"><button class="primary" id="load" type="button">Load the page</button></div>
-        <p class="note">Tip: load as a real visitor, flip a kill switch, then press “Load more articles”. The new slot stays empty because the server re-checks on every ad-units call.</p>
+        <p class="note">Tip: load as a real visitor, flip a kill switch, then press “Load more articles”. The new slot stays empty because the ad script re-checks with the server before every new slot.</p>
       </section>
 
       <section id="verdict" data-kind="idle" aria-live="polite">

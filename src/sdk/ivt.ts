@@ -19,7 +19,7 @@ type IVTResult = {
   admitted: boolean;
   monetizationEligible: boolean;
   // Opaque, short-lived Ad Pass. ivt.js never interprets it and knows nothing about what it
-  // unlocks; the ad stack (e.g. Price Optimiser) exchanges it at /v1/ad-units.
+  // unlocks; the ad stack (e.g. Price Optimiser) confirms it at /v1/ad-check.
   // See docs/ad-pass/README.md.
   adPass?: string;
   stopTelemetry?: () => void;

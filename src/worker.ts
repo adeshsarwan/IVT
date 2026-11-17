@@ -1,7 +1,7 @@
 import { getNetworkIntel, observeOnlyNetworkRisk } from "./network";
 import { evaluateIdentityRisk } from "./identity";
 import { monetizationEligibility } from "./eligibility";
-import { type AdPassEnv, affiliateFromAttribution, handleAdUnits, maybeIssueAdPass } from "./adpass";
+import { type AdPassEnv, affiliateFromAttribution, handleAdCheck, maybeIssueAdPass } from "./adpass";
 
 export interface Env extends AdPassEnv {
   DB: D1Database;
@@ -443,8 +443,8 @@ export default {
       return json({ ok: true }, 200, origin);
     }
 
-    if (url.pathname === "/v1/ad-units" && request.method === "POST") {
-      return handleAdUnits(request, env, configuredOrigin(request, env));
+    if (url.pathname === "/v1/ad-check" && request.method === "POST") {
+      return handleAdCheck(request, env, configuredOrigin(request, env));
     }
 
     if (url.pathname.startsWith("/v1/runtime/") && request.method === "GET") {

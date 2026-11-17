@@ -1,10 +1,11 @@
 /*
  * Thebes Ad Pass gate: reference code for any ad stack (Price Optimiser, a GPT tag, Prebid...).
- * Paste it at the top of the ad script and start the ad stack ONLY when it returns a config.
+ * Paste it at the top of the ad script and start the ad stack ONLY when it returns an approval.
+ * Ad units, slots and sizes stay in the ad script; the server only says yes/no.
  *
- *   const config = await thebesAdGate();
- *   if (!config) return;            // no pass, refused, server down or too slow: do nothing
- *   startAds(config);               // GPT / bids / slots only from here
+ *   const approval = await thebesAdGate();
+ *   if (!approval) return;          // no pass, refused, server down or too slow: do nothing
+ *   startAds(approval.targeting);   // GPT / bids / slots only from here; set these key-values
  *
  * Plain ES2020, no dependencies. Every failure resolves to null; it never throws.
  * Docs: docs/ad-pass/README.md
@@ -24,11 +25,11 @@ async function thebesAdGate(options) {
     var adPass = admission && admission.adPass;
     if (typeof adPass !== "string" || !adPass) return null;
 
-    // 2. Exchange the pass for this visit's ad config. The server re-checks everything.
+    // 2. Ask the server to confirm the pass. It re-checks signature, expiry, binding, kill switches.
     var controller = typeof AbortController === "function" ? new AbortController() : null;
     var timer = setTimeout(function () { if (controller) controller.abort(); }, remaining());
     try {
-      var response = await orNullAtDeadline(fetch(endpoint + "/v1/ad-units", {
+      var response = await orNullAtDeadline(fetch(endpoint + "/v1/ad-check", {
         method: "POST",
         mode: "cors",
         credentials: "omit",
@@ -38,8 +39,8 @@ async function thebesAdGate(options) {
         signal: controller ? controller.signal : undefined,
       }));
       if (!response || !response.ok) return null;
-      var config = await response.json();
-      return config && typeof config === "object" && Array.isArray(config.slots) ? config : null;
+      var approval = await response.json();
+      return approval && approval.ok === true && approval.targeting && typeof approval.targeting === "object" ? approval : null;
     } finally {
       clearTimeout(timer);
     }

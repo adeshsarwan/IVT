@@ -15,14 +15,14 @@ const VISITOR_IP = "203.0.113.7";
 
 type Scenario = "real" | "bot" | "noivt" | "down" | "stolen" | "otherbrowser" | "tampered" | "expired" | "crosssite";
 const SCENARIOS: Record<Scenario, { label: string; what: string }> = {
-  real: { label: "Real visitor", what: "A normal browser on gamewhame.com. ivt.js runs, the server approves, the ad script swaps the pass for ad units." },
+  real: { label: "Real visitor", what: "A normal browser on gamewhame.com. ivt.js runs, the server approves, and the ad script starts only after the server confirms the pass." },
   bot: { label: "Bot (headless browser)", what: "The browser reports webdriver = true. In enforce mode the server gives no pass, so the ad script has nothing to redeem." },
   noivt: { label: "Partner removed ivt.js", what: "Only the ad script is on the page. Its gate waits for a pass that never comes, then gives up. No ads." },
   down: { label: "IVT server unreachable", what: "Every call to ivt.thebesads.com fails. No pass, no ad units, no ads." },
-  stolen: { label: "Pass replayed from another network", what: "A valid pass is sent to /v1/ad-units from IP 198.51.100.23 instead of 203.0.113.x. The IP binding fails." },
+  stolen: { label: "Pass replayed from another network", what: "A valid pass is sent to /v1/ad-check from IP 198.51.100.23 instead of 203.0.113.x. The IP binding fails." },
   otherbrowser: { label: "Pass replayed from a script", what: "A valid pass is sent with User-Agent python-requests. The browser binding fails." },
   tampered: { label: "Pass edited to never expire", what: "The browser rewrites exp to one year from now and keeps the old signature. The signature check fails." },
-  expired: { label: "Pass used after 31 minutes", what: "The ad-units call happens 31 minutes after admission. The 30 minute pass has expired." },
+  expired: { label: "Pass used after 31 minutes", what: "The ad-check call happens 31 minutes after admission. The 30 minute pass has expired." },
   crosssite: { label: "Pass reused on another site", what: "A pass issued to gamewhame.com is redeemed from jobsqualified.com. The origin binding fails." },
 };
 
@@ -30,22 +30,14 @@ const state = {
   scenario: "real" as Scenario,
   mode: "enforce",
   kill: { global: false, site: false, aff42: false, aff77: false },
-  config: "ok" as "ok" | "house" | "missing" | "broken",
   aff: "42" as string, // "" = no ?aff= in the URL
 };
 
-const unitSet = (aff: string) => ({
-  slots: [
-    { div: "top", path: `/1234567/aff_${aff}/gamewhame_top`, sizes: [[300, 250], [336, 280]] },
-    { div: "mid", path: `/1234567/aff_${aff}/gamewhame_mid`, sizes: [[300, 250]] },
-  ],
-});
-const adConfig = (withHouse: boolean) => ({
-  v: 2,
-  networkCode: "1234567",
-  affiliates: { "42": unitSet("42"), "77": unitSet("77") },
-  ...(withHouse ? { house: unitSet("house") } : {}),
-});
+// The ad script (Price Optimiser) owns its ad units. The server never sees or returns these.
+const AD_STACK_SLOTS: Record<string, { path: string; sizes: number[][] }> = {
+  top: { path: "/1234567/gamewhame/top", sizes: [[300, 250]] },
+  mid: { path: "/1234567/gamewhame/mid", sizes: [[300, 250]] },
+};
 
 // ---------- in-memory Cloudflare bindings ----------
 
@@ -82,11 +74,6 @@ const env = {
       if (key === `ads:site:${SITE}`) return state.kill.site ? "off" : null;
       if (key === "ads:aff:42") return state.kill.aff42 ? "off" : null;
       if (key === "ads:aff:77") return state.kill.aff77 ? "off" : null;
-      if (key === `adunits:site:${SITE}`) {
-        if (state.config === "missing") return null;
-        if (state.config === "broken") return '{"v":1,"networkCode":"1234567","slots":[{"div":"top"';
-        return JSON.stringify(adConfig(state.config === "house"));
-      }
       return null;
     },
     async put() {},
@@ -149,7 +136,7 @@ function decodePass(pass: string): Array<[string, string]> {
       ["key id", kid],
       ["site / origin", `${c.sk} · ${c.o}`],
       ["valid for", `${mins} min (until ${new Date(c.exp * 1000).toLocaleTimeString()})`],
-      ["affiliate", c.aff === null ? "none (house units)" : String(c.aff)],
+      ["affiliate", c.aff === null ? "none" : String(c.aff)],
       ["eligible at issue", c.e ? "yes" : "no"],
       ["IP range hash", c.ih],
       ["browser hash", c.uh],
@@ -174,13 +161,13 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (!url.startsWith(ENDPOINT)) return realFetch(input, init);
   const path = new URL(url).pathname;
   if (path === "/v2/telemetry") return new Response('{"ok":true}', { headers: { "content-type": "application/json" } });
-  const isAdUnits = path === "/v1/ad-units";
-  if (isAdUnits) {
+  const isAdCheck = path === "/v1/ad-check";
+  if (isAdCheck) {
     let sent: unknown;
     try { sent = JSON.parse(typeof init?.body === "string" ? init.body : "{}").adPass; } catch { sent = undefined; }
     if (!currentPass || sent !== currentPass) return new Response(null, { status: 403 }); // left over from a previous simulated page
   }
-  const actor = isAdUnits ? "ad script → server" : "ivt.js → server";
+  const actor = isAdCheck ? "ad script → server" : "ivt.js → server";
 
   if (state.scenario === "down") {
     log(actor, `POST ${path} · network error`, "deny", "The IVT server could not be reached.");
@@ -198,15 +185,15 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   }
   const headers = new Headers({
     "content-type": "application/json",
-    Origin: isAdUnits && state.scenario === "crosssite" ? "https://jobsqualified.com" : SITE_ORIGIN,
-    "CF-Connecting-IP": isAdUnits && state.scenario === "stolen" ? "198.51.100.23" : VISITOR_IP,
-    "User-Agent": isAdUnits && state.scenario === "otherbrowser" ? "python-requests/2.32" : navigator.userAgent,
+    Origin: isAdCheck && state.scenario === "crosssite" ? "https://jobsqualified.com" : SITE_ORIGIN,
+    "CF-Connecting-IP": isAdCheck && state.scenario === "stolen" ? "198.51.100.23" : VISITOR_IP,
+    "User-Agent": isAdCheck && state.scenario === "otherbrowser" ? "python-requests/2.32" : navigator.userAgent,
   });
   const request = new Request(url, { method: init?.method || "GET", body });
   Object.defineProperty(request, "headers", { value: headers });
 
   const realNow = Date.now;
-  if (isAdUnits && state.scenario === "expired") Date.now = () => realNow() + 31 * 60_000;
+  if (isAdCheck && state.scenario === "expired") Date.now = () => realNow() + 31 * 60_000;
   let response: Response;
   try { response = await worker.fetch(request, env); } finally { Date.now = realNow; }
 
@@ -229,22 +216,21 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     } else {
       const why = state.mode === "off" ? "AD_PASS_MODE is off"
         : data.monetization?.eligible === false && state.mode === "enforce" ? "visit is not eligible"
-        : state.aff === "999" ? "affiliate 999 is not configured for this site"
-        : !state.aff && state.config !== "house" ? "no ?aff= and the site has no house ad units"
-        : "kill switch on or ad config unusable";
+        : state.aff && !/^[A-Za-z0-9_-]{1,32}$/.test(state.aff) ? "the ?aff= value is malformed"
+        : "a kill switch is on";
       log(actor, `POST /v1/admit · ${response.status} · no Ad Pass`, "deny", [["status", String(data.status)], ["eligible", String(data.monetization?.eligible)], ["reason (server side only)", why]]);
     }
-  } else if (isAdUnits) {
+  } else if (isAdCheck) {
     if (response.ok) {
       const data = JSON.parse(text);
-      log(actor, `POST /v1/ad-units · 200 · ad units returned`, "pass", [
-        ["network", data.networkCode],
-        ["slots", data.slots.map((s: any) => `${s.div} → ${s.path}`).join("\n")],
+      log(actor, "POST /v1/ad-check · 200 · approved", "pass", [
+        ["answer", "ads allowed (no ad units: the ad script owns those)"],
         ["key-values", Object.entries(data.targeting).map(([k, v]) => `${k}=${v}`).join("  ")],
+        ["pass valid until", new Date(data.expiresAt * 1000).toLocaleTimeString()],
         ["cache-control", response.headers.get("cache-control") || ""],
       ]);
     } else {
-      log(actor, `POST /v1/ad-units · ${response.status} · refused`, "deny", "Empty body by design: the browser learns nothing about why.");
+      log(actor, `POST /v1/ad-check · ${response.status} · refused`, "deny", "Empty body by design: the browser learns nothing about why.");
     }
   }
   return response;
@@ -267,16 +253,16 @@ head.appendChild = (node: any) => {
   return realAppend(node);
 };
 
-// Stand-in for Price Optimiser: it starts only with the config the gate returned, and fills
-// matching placeholders. The real PO would load GPT and run its auction here.
-function startAdStack(config: any, runId: number) {
+// Stand-in for Price Optimiser: it starts only after the gate approved, uses its OWN slot list,
+// and adds the server's key-values. The real PO would load GPT and run its auction here.
+function startAdStack(approval: any, runId: number) {
   if (runId !== currentRun) return 0;
-  const bySlot = new Map<string, any>(config.slots.map((s: any) => [s.div, s]));
+  const bySlot = new Map(Object.entries(AD_STACK_SLOTS));
   let filled = 0;
   for (const el of document.querySelectorAll<HTMLElement>("#site [data-ad-slot]:not(.filled)")) {
     const slot = bySlot.get(el.getAttribute("data-ad-slot") || "");
     if (!slot) continue;
-    renderAd(el, slot, config.targeting || {});
+    renderAd(el, slot, approval.targeting || {});
     filled++;
   }
   return filled;
@@ -346,14 +332,14 @@ async function loadPage() {
     }
     const runId = currentRun;
     log("page", "Ad script starts; its gate waits for an Ad Pass", "info");
-    const config = await thebesAdGate({ endpoint: ENDPOINT, timeoutMs: 2500 });
+    const approval = await thebesAdGate({ endpoint: ENDPOINT, timeoutMs: 2500 });
     if (runId !== currentRun) return;
-    const shown = config ? startAdStack(config, runId) > 0 : false;
+    const shown = approval ? startAdStack(approval, runId) > 0 : false;
     if (shown) {
       const observeOnly = state.mode === "observe" && state.scenario === "bot";
       setVerdict("pass", "Ads shown", observeOnly
         ? "Observe mode: this visit would be blocked, but ads still load, tagged ivt_e=0 so GAM reports can measure it."
-        : "The server approved this visit and handed out the ad units.");
+        : "The server confirmed the pass, so the ad script started.");
       ($("#more") as HTMLButtonElement).disabled = false;
     } else {
       log("ad script", "Gate returned nothing. The ad stack never starts: no GPT, no bids.", "deny");
@@ -372,9 +358,9 @@ async function addSlot() {
   $("#feed").appendChild(block);
   log("page", "New placeholder added (infinite scroll). The ad script runs the gate again with the same pass.", "info");
   const runId = currentRun;
-  const config = await thebesAdGate({ endpoint: ENDPOINT, timeoutMs: 2500 });
-  if (!config) { log("ad script", "Gate refused. The new slot stays empty.", "deny"); return; }
-  startAdStack(config, runId);
+  const approval = await thebesAdGate({ endpoint: ENDPOINT, timeoutMs: 2500 });
+  if (!approval) { log("ad script", "Gate refused. The new slot stays empty.", "deny"); return; }
+  startAdStack(approval, runId);
 }
 
 // ---------- controls ----------
@@ -400,7 +386,6 @@ function wireControls() {
   for (const k of ["global", "site", "aff42", "aff77"] as const) {
     $(`#kill-${k}`).addEventListener("change", (e) => { state.kill[k] = (e.target as HTMLInputElement).checked; });
   }
-  $("#config").addEventListener("change", (e) => { state.config = (e.target as HTMLSelectElement).value as typeof state.config; });
   $("#aff").addEventListener("change", (e) => {
     state.aff = (e.target as HTMLSelectElement).value;
     $("#url").textContent = `https://gamewhame.com/games/word-sprint${state.aff ? `?aff=${state.aff}` : ""}`;
