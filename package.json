@@ -12,7 +12,8 @@
     "deploy": "npm run build && wrangler deploy",
     "build:demo": "node demo/build.mjs",
     "test:provenance": "esbuild provenance/tests/*.test.ts --bundle --platform=node --format=esm --outdir=.wrangler/test-provenance --out-extension:.js=.mjs --log-level=warning && node --test .wrangler/test-provenance/*.test.mjs",
-    "build:provenance-demo": "node provenance/demo/build.mjs"
+    "build:provenance-demo": "node provenance/demo/build.mjs",
+    "provenance:local": "esbuild provenance/pipeline/local/run-local.ts --bundle --platform=node --format=esm --outfile=.wrangler/provenance-local.mjs --log-level=warning && node .wrangler/provenance-local.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260910.1",

@@ -1,0 +1,22 @@
+// EXAMPLE ONLY — not deployed. A separate Worker for the provenance pipeline.
+// Secrets (wrangler secret put …): CLICKHOUSE_PASSWORD, GADS_DEVELOPER_TOKEN, GADS_CLIENT_SECRET,
+// GADS_MCC_REFRESH_TOKEN, and GADS_RT_<aff> for partners who connected via their own OAuth grant.
+{
+  "name": "thebes-provenance",
+  "main": "provenance/pipeline/worker.ts",
+  "compatibility_date": "2026-11-01",
+  "triggers": { "crons": ["15 */6 * * *"] },
+  "d1_databases": [{ "binding": "DB", "database_name": "thebes-ivt", "database_id": "<same as main>" }],
+  "queues": {
+    "producers": [{ "binding": "PROVENANCE_Q", "queue": "provenance" }],
+    "consumers": [{ "queue": "provenance", "max_batch_size": 100, "max_batch_timeout": 5, "max_retries": 5, "dead_letter_queue": "provenance-dlq" }]
+  },
+  "limits": { "cpu_ms": 300000 },
+  "vars": {
+    "CLICKHOUSE_URL": "https://<instance>.clickhouse.cloud:8443",
+    "CLICKHOUSE_DB": "provenance",
+    "CLICKHOUSE_USER": "provenance_job",
+    "GADS_CLIENT_ID": "<oauth client id>",
+    "GADS_MCC_ID": "<our manager account id>"
+  }
+}

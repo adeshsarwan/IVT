@@ -199,7 +199,8 @@ export function evaluateGoogle(
     const daySet = new Set(days);
     const ours = group.filter((r) => daySet.has(localDate(r.ts, tz))).length;
     const daily = (data.dailyClicks ?? []).filter((d) => daySet.has(d.Date));
-    const platform = clickLevel ? data.clicks.filter((c) => daySet.has(c.Date)).length : daily.reduce((a, d) => a + d.Clicks, 0);
+    const fromDaily = !clickLevel || (data.clickScope === 'joined' && daily.length > 0);
+    const platform = fromDaily ? daily.reduce((a, d) => a + d.Clicks, 0) : data.clicks.filter((c) => daySet.has(c.Date)).length;
     if (!clickLevel) {
       // Network mix from the aggregate report (counts, not a sample).
       const known = daily.filter((d) => d.AdNetworkType);

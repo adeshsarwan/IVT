@@ -163,6 +163,10 @@ export interface GooglePlatformData {
   dailyClicks?: GoogleDailyRow[];
   /** Where this data came from. Absent = treated as a strong API pull. */
   connector?: ConnectorInfo;
+  /** 'all' (default): `clicks` holds every click of the covered days.
+   *  'joined': `clicks` holds only the clicks whose gclid we saw (a database join did the lookup);
+   *  the day ratio then uses `dailyClicks` for Google's full click count. */
+  clickScope?: 'all' | 'joined';
 }
 
 /** One row shaped like a Meta Insights response at level=ad, time_increment=1,

@@ -298,3 +298,33 @@ Affiliate tier = worst of its sources. KV plan (applied by a separate audited jo
 - Real connectors (the API pulls in `docs/PARTNER_DATA_ACCESS.md`), the warehouse, and the job that applies the KV plan.
 - Geo consistency (`{loc_physical_ms}` vs IP geo) and Google `invalid_clicks` per campaign. These are easy to add as rules once the data is in.
 - A Worker reader for a THROTTLE key (`adcap:aff:<id>`). Today the Ad Pass is on/off only.
+
+## 12. Google pipeline: ClickHouse + batch job (`pipeline/`)
+
+Google only for now (Meta later). Not deployed and not wired into the Ad Pass Worker. It runs locally against ClickHouse in Docker and a fake Google Ads API.
+
+**Storage**
+
+| Where | What | Why |
+|---|---|---|
+| ClickHouse `landings` | every landing (id, ts, site, aff, route, url, hashed IP/UA); `gclid` pulled from the URL by ClickHouse | billions of rows, fast joins on gclid, 90-day TTL |
+| ClickHouse `google_clicks` | **every** Google click (click_view), one row per gclid | the full list to match against |
+| ClickHouse `google_daily` | Google's own click totals per day × campaign × network | count check (landings ÷ clicks) |
+| ClickHouse `google_sync` | one row per account × day sync (ok / error / no_access) | coverage and status view |
+| D1 (`pipeline/d1/0001_provenance.sql`) | partners, breaker state + cursor, window verdicts, **review queue** | small state |
+| KV `ads:aff:<id>` | kill switch | **set by a person only** |
+
+**Batch job** (`pipeline/job.ts`), per partner, isolated (one failure never stops the others):
+1. **Sync:** for each Google Ads account, pull every click of the last 2 complete account-local days (`click_view`, one `searchStream` request per day) plus daily totals. The day is replaced each time, so re-runs are idempotent and clicks that Google later removes disappear.
+2. **Evaluate:** read this affiliate's landings since the cursor. ClickHouse joins them to Google's clicks by gclid and returns only the matches plus daily totals (`clickScope: 'joined'`). The engine produces windows. Only the leading run of FINAL windows is committed to the breaker and cursor; PROVISIONAL/OPEN windows are re-read next run.
+3. **Review:** BLOCK → an open item in the review queue (`suggest ads:aff:<id> = off`, top reasons). Nothing is written to KV.
+4. **Match report (SQL only):** for each day: landings, with gclid, malformed, matched, **foreign** (a real gclid that belongs to *another* affiliate's account), not found, Google clicks, landings per click, unlanded share, covered.
+
+**Running it**
+- Locally: `npm run provenance:local` (Docker ClickHouse on :8123; it refuses any non-localhost URL). It runs 6 partners (clean, bot farm, porn placements, forgery, copied gclids, revoked access) and prints sync, match report, verdicts and the review queue, plus a next-day run.
+- Tests: `CLICKHOUSE_URL=http://localhost:8123 npm run test:provenance` also runs the end-to-end suite; without it those tests are skipped.
+- In production (`pipeline/worker.ts`, `wrangler.example.jsonc`): a separate Worker. Cron every 6h sends one queue message per partner; the consumer runs `runPartner`. The Ad Pass Worker sends landings to the same queue (`ctx.waitUntil`, never blocks), and the consumer batch-inserts them.
+
+**Google Ads API cost:** 3 requests per account per run (customer + 2 days of click_view) + 1 daily-totals request. That's ~1,600 requests/day for 100 accounts at 4 runs/day, inside Basic access (verify limits).
+
+**Verify before going live:** API version (`v22` assumed), click_view single-day filter and 90-day limit, header names, Basic-access daily limits, ClickHouse Cloud sizing on real volumes.
