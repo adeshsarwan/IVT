@@ -310,7 +310,13 @@ describe('circuit breaker (hysteresis)', () => {
 
 describe('KV plan (Ad Pass kill switch)', () => {
   it('maps tiers to ads:aff:<id>', () => {
-    assert.deepEqual(kvPlan('42', 'BLOCK')[0], { op: 'put', key: 'ads:aff:42', value: 'off', note: kvPlan('42', 'BLOCK')[0].note });
+    // Default: manual. BLOCK is only a suggestion; nothing is written automatically.
+    assert.equal(kvPlan('42', 'BLOCK')[0].op, 'suggest');
+    assert.equal(kvPlan('42', 'BLOCK')[0].key, 'ads:aff:42');
+    assert.ok(!kvPlan('42', 'BLOCK').some((a) => a.op === 'put'));
+    assert.ok(!kvPlan('42', 'THROTTLE').some((a) => a.op === 'put'));
+    // Opt-in automatic mode.
+    assert.deepEqual(kvPlan('42', 'BLOCK', true)[0], { op: 'put', key: 'ads:aff:42', value: 'off', note: kvPlan('42', 'BLOCK', true)[0].note });
     assert.equal(kvPlan('42', 'THROTTLE')[1].key, 'adcap:aff:42');
     assert.equal(kvPlan('42', 'WATCH')[0].op, 'none');
     assert.equal(kvPlan('42', 'OK')[0].op, 'none');

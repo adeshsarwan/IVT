@@ -55,7 +55,7 @@ logged landings (IVT D1 / Edge Collector)        platform pulls (separate job, p
             ▼
  ⑤ breaker    → per affiliate × source, hysteresis → tier
             ▼
- ⑥ plan       → affiliate tier = worst source → KV plan (ads:aff:<id> = off on BLOCK)
+ ⑥ plan       → affiliate tier = worst source → KV plan (BLOCK = recommend ads:aff:<id> = off; a human applies it)
 ```
 
 `runProvenance({ requests, platform, now, previous? }, configOverrides)` returns:
@@ -240,6 +240,8 @@ These numbers are **starting points**. Run in shadow mode, look at real distribu
 
 ## 8. Tiers, breaker and the kill switch
 
+> **Blocking is manual for now.** The engine never writes KV. With the default `enforcement.autoBlock: false`, every KV write in the plan is `op: 'suggest'` and BLOCK adds the note "review, then turn the kill switch on by hand".
+
 Window severity = worst applicable reason. The **breaker** keeps a tier per `aff|source`:
 
 - **Up fast.** A window worse than the current tier moves straight to WATCH or THROTTLE. BLOCK needs `blockConfirmWindows` (2) *consecutive* BLOCK windows, unless a reason is **hard**. Until confirmed, it sits at THROTTLE.
@@ -255,7 +257,7 @@ Affiliate tier = worst of its sources. KV plan (applied by a separate audited jo
 | OK | no change (`ads:aff:<id>` absent or `on`) |
 | WATCH | no change; alert and review |
 | THROTTLE | keep `ads:aff:<id>` on; **proposed** `adcap:aff:<id> = reduced` (the Worker doesn't read it yet; open question) |
-| BLOCK | `put ads:aff:<id> = off`. The Ad Pass then refuses passes and ad units for this affiliate on every site |
+| BLOCK | **Manual (default).** `suggest ads:aff:<id> = off`: flagged for review; a human sets the key by hand. Then the Ad Pass refuses passes and ad units for this affiliate on every site. Set `enforcement.autoBlock: true` to emit a `put` instead (later, once trusted) |
 | `(none)` affiliate | no per-affiliate switch; use `ads:site:<siteKey>` manually if needed |
 
 ## 9. Edge cases covered (each has a test)

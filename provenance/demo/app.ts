@@ -116,7 +116,7 @@ function render(rep: FleetResult, ms: number) {
       <div class="aff-head"><span class="aff-id">aff ${esc(a.aff)}</span><span class="pill ${tierClass(a.tier)}">${a.tier}</span></div>
       <div class="muted small">by source: ${Object.entries(a.bySource).map(([s, t]) => `${s} <b>${t}</b>`).join(' · ')}</div>
       <div class="muted small">access: ${Object.entries(a.access).map(([s, t]) => `${s} ${t}`).join(' · ') || '–'}${connOf(a.aff) ? ` · data via ${esc(connOf(a.aff))}` : ''}</div>
-      <ul class="actions">${a.actions.map((x) => `<li><code>${x.op === 'none' ? 'no change' : `${x.op} ${esc(x.key)}${x.value ? ` = "${esc(x.value)}"` : ''}`}</code> <span class="muted">${esc(x.note)}</span></li>`).join('')}</ul>
+      <ul class="actions">${a.actions.map((x) => `<li><code>${x.op === 'none' ? 'no change' : `${x.op === 'suggest' ? 'recommend (manual):' : x.op} ${esc(x.key)}${x.value ? ` = "${esc(x.value)}"` : ''}`}</code> <span class="muted">${esc(x.note)}</span></li>`).join('')}</ul>
       ${a.notes.map((n) => `<div class="note small">${esc(n)}</div>`).join('')}
     </div>`).join('');
 

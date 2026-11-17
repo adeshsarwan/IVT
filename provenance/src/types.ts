@@ -302,7 +302,8 @@ export interface WindowResult {
 }
 
 export interface KvAction {
-  op: 'put' | 'delete' | 'none';
+  /** 'suggest' = recommended write that a human must approve and apply (manual mode). */
+  op: 'put' | 'delete' | 'none' | 'suggest';
   key: string;
   value?: string;
   note: string;

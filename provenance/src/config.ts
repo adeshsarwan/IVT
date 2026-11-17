@@ -102,6 +102,12 @@ export interface ProvenanceConfig {
     unknownGraceMs: number;
   };
 
+  enforcement: {
+    /** false (default): BLOCK is only a recommendation; a human turns the kill switch on.
+     *  true: the plan carries the KV write for an audited job to apply automatically. */
+    autoBlock: boolean;
+  };
+
   connectors: {
     /** Minimum tier by how the platform data reached us (self-reported data can prove bad, not good). */
     floors: Record<ConnectorType, TierName>;
@@ -176,6 +182,8 @@ export const DEFAULT_CONFIG: ProvenanceConfig = {
   freshness: { maxStaleMs: 36 * H, provisionalAbove: 0.5 },
 
   breaker: { blockConfirmWindows: 2, recoverWindows: 3, manualUnblock: true, unknownGraceMs: 48 * H },
+
+  enforcement: { autoBlock: false },
 
   accessFloor: { none: 'THROTTLE', partial: 'WATCH' },
 

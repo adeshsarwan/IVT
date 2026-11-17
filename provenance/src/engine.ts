@@ -91,13 +91,13 @@ export function runProvenance(input: ProvenanceInput, overrides: ConfigOverrides
     totals: { input: (input.requests || []).length, duplicatesDropped: norm.duplicatesDropped, invalidDropped: norm.invalidDropped, normalized: norm.requests.length },
     windows,
     breakers,
-    affiliates: affiliateSummary(breakers, access),
+    affiliates: affiliateSummary(breakers, access, cfg.enforcement.autoBlock),
   };
 }
 
 const sortReasons = (r: Reason[]) => [...r].sort((a, b) => b.severity - a.severity);
 
-export function affiliateSummary(breakers: Record<string, BreakerState>, access: Record<string, AffiliateResult['access']>): AffiliateResult[] {
+export function affiliateSummary(breakers: Record<string, BreakerState>, access: Record<string, AffiliateResult['access']>, autoBlock = false): AffiliateResult[] {
   const byAff = new Map<string, Partial<Record<Source, Tier>>>();
   const manual = new Set<string>();
   for (const [k, st] of Object.entries(breakers)) {
@@ -110,20 +110,25 @@ export function affiliateSummary(breakers: Record<string, BreakerState>, access:
     const tier = TIERS[Math.max(...Object.values(bySource).map((t) => TIERS.indexOf(t!)))];
     const notes: string[] = [];
     if (manual.has(aff)) notes.push('BLOCK held: recent windows are clean, a human may unblock (manualReset)');
-    return { aff, tier, bySource, access: access[aff] ?? {}, actions: kvPlan(aff, tier), notes };
+    if (tier === 'BLOCK' && !autoBlock) notes.push('BLOCK recommended: review the evidence, then turn the kill switch on by hand');
+    return { aff, tier, bySource, access: access[aff] ?? {}, actions: kvPlan(aff, tier, autoBlock), notes };
   });
 }
 
-/** What to write to the Ad Pass KV (`IVT_CONFIG`). This module never writes; a separate,
- *  audited job applies the plan (shadow first). */
-export function kvPlan(aff: string, tier: Tier): KvAction[] {
+/** What to write to the Ad Pass KV (`IVT_CONFIG`). This module never writes.
+ *  autoBlock = false (default): every write is a 'suggest' that a human approves and applies.
+ *  autoBlock = true: 'put' actions for an audited job to apply (shadow first). */
+export function kvPlan(aff: string, tier: Tier, autoBlock = false): KvAction[] {
+  const write = autoBlock ? 'put' : 'suggest';
   if (aff === '(none)') return [{ op: 'none', key: '-', note: 'house traffic (no aff): no per-affiliate switch; use ads:site:<siteKey> if needed' }];
   const key = `ads:aff:${aff}`;
   switch (tier) {
-    case 'BLOCK': return [{ op: 'put', key, value: 'off', note: 'kill switch: no Ad Pass / ad units for this affiliate on any site' }];
+    case 'BLOCK': return [{ op: write, key, value: 'off', note: autoBlock
+      ? 'kill switch: no Ad Pass / ad units for this affiliate on any site'
+      : 'RECOMMENDED kill switch: a human reviews the evidence and sets this by hand (no automatic block)' }];
     case 'THROTTLE': return [
       { op: 'none', key, note: 'keep ads on (Ad Pass is on/off only today)' },
-      { op: 'put', key: `adcap:aff:${aff}`, value: 'reduced', note: 'PROPOSED key, not read by the Worker yet: reduced ad load (1 slot, no refresh)' },
+      { op: write, key: `adcap:aff:${aff}`, value: 'reduced', note: 'PROPOSED key, not read by the Worker yet: reduced ad load (1 slot, no refresh)' },
     ];
     case 'WATCH': return [{ op: 'none', key, note: 'no change; alert + review' }];
     default: return [{ op: 'none', key, note: 'no change (key absent or "on")' }];

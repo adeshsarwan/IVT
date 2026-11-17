@@ -16,11 +16,17 @@ describe('preset scenarios', () => {
     assert.equal(rep.affiliates[0].actions[0].op, 'none');
   });
 
-  it('bot farm → hard BLOCK, kill switch off', () => {
+  it('bot farm → hard BLOCK, recommended only (manual by default)', () => {
     const rep = run('bot_farm');
     assert.ok(has(rep, 'low_match_rate') && has(rep, 'landings_exceed_clicks') && has(rep, 'flat_hour_curve'));
     assert.equal(decided(rep)[0].hard, true);
     assert.equal(rep.affiliates[0].tier, 'BLOCK');
+    assert.deepEqual(rep.affiliates[0].actions[0], { op: 'suggest', key: 'ads:aff:13', value: 'off', note: rep.affiliates[0].actions[0].note });
+    assert.ok(rep.affiliates[0].notes.some((n) => n.includes('by hand')));
+  });
+
+  it('bot farm with autoBlock on → kill switch put', () => {
+    const rep = run('bot_farm', { enforcement: { autoBlock: true } });
     assert.deepEqual(rep.affiliates[0].actions[0], { op: 'put', key: 'ads:aff:13', value: 'off', note: rep.affiliates[0].actions[0].note });
   });
 
