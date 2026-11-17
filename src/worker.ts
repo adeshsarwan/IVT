@@ -388,7 +388,7 @@ export default {
       const telemetryToken = await issueTelemetryToken(env, sessionId, origin);
       const eligible = monetizationEligibility(classification, decision);
       // Ad Pass: shadow IVT mode uses the would-be decision (WOULD_PASS); enforce IVT mode uses PASS.
-      // AD_PASS_MODE (off|observe|enforce) decides whether that eligibility gates the pass. See docs/AD_PASS.md.
+      // AD_PASS_MODE (off|observe|enforce) decides whether that eligibility gates the pass. See docs/ad-pass/DESIGN.md.
       const adPass = await maybeIssueAdPass(env, {
         request, sessionId, siteId: site.id, siteKey: body.siteKey, origin,
         eligible: eligible || (classification === "CLEAN" && decision === "PASS"),

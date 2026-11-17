@@ -3,7 +3,7 @@
 Status: **proposal only. Nothing here is applied.** The Ad Pass hot path works today without any of
 it (KV + signed tokens). These changes add attribution, audit and reporting, and are meant to ship
 together in one reviewed migration (`0005_ad_pass.sql`), following the release steps in
-`docs/DEVELOPER_HANDOFF.md` (isolated bindings first, D1 backup, additive migration, then deploy).
+`docs/DEVELOPER_HANDOFF.md` (on the partner's handoff branch) (isolated bindings first, D1 backup, additive migration, then deploy).
 
 The SQL below is kept in this document on purpose, not in `migrations/`, so that
 `wrangler d1 migrations apply` cannot pick it up before review.

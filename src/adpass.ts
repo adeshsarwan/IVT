@@ -1,5 +1,5 @@
 // Ad Pass: a short-lived, stateless, HMAC-signed ticket that is the ONLY way to obtain the
-// ad-unit configuration for a site. See docs/AD_PASS.md for the flow and threat model.
+// ad-unit configuration for a site. See docs/ad-pass/ (README.md to integrate, DESIGN.md for the threat model).
 //
 // Everything here fails closed: any missing secret, unreadable KV, malformed config, bad token
 // or unexpected exception results in "no pass" / HTTP 403 with no body.

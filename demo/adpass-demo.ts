@@ -1,22 +1,23 @@
-// In-browser Ad Pass demo. Runs the REAL Worker (src/worker.ts) and the REAL browser SDK
-// (src/sdk/ivt.ts, src/sdk/ads.ts) in one page. Calls to the Worker are routed in-page to
+// In-browser Ad Pass demo. Runs the REAL Worker (src/worker.ts), the REAL ivt.js (src/sdk/ivt.ts)
+// and the REAL reference gate (docs/ad-pass/ad-gate.js, injected by demo/build.mjs) in one page. Calls to the Worker are routed in-page to
 // worker.fetch() with in-memory KV/D1/Durable Object stand-ins. Google's GPT is stubbed:
-// no real ad requests are made. Never deployed; built by `npm run build:demo`.
+// no real ad requests are made. A Price Optimiser stand-in renders placeholder ads. Never deployed; built by `npm run build:demo`.
 import worker, { type Env } from "../src/worker";
 import { initIVT } from "../src/sdk/ivt";
-import { initAds } from "../src/sdk/ads";
+
+// Global from docs/ad-pass/ad-gate.js (inlined before this bundle).
+declare function thebesAdGate(options?: { endpoint?: string; timeoutMs?: number }): Promise<any | null>;
 
 const ENDPOINT = "https://ivt.thebesads.com";
 const SITE = "gamewhame.com";
 const SITE_ORIGIN = "https://gamewhame.com";
-const GPT_URL = "https://securepubads.g.doubleclick.net/tag/js/gpt.js";
 const VISITOR_IP = "203.0.113.7";
 
 type Scenario = "real" | "bot" | "noivt" | "down" | "stolen" | "otherbrowser" | "tampered" | "expired" | "crosssite";
 const SCENARIOS: Record<Scenario, { label: string; what: string }> = {
-  real: { label: "Real visitor", what: "A normal browser on gamewhame.com. ivt.js runs, the server approves, ads.js swaps the pass for ad units." },
-  bot: { label: "Bot (headless browser)", what: "The browser reports webdriver = true. In enforce mode the server gives no pass, so ads.js has nothing to redeem." },
-  noivt: { label: "Partner removed ivt.js", what: "Only ads.js is on the page. It waits for a pass that never comes, then gives up. No ads." },
+  real: { label: "Real visitor", what: "A normal browser on gamewhame.com. ivt.js runs, the server approves, the ad script swaps the pass for ad units." },
+  bot: { label: "Bot (headless browser)", what: "The browser reports webdriver = true. In enforce mode the server gives no pass, so the ad script has nothing to redeem." },
+  noivt: { label: "Partner removed ivt.js", what: "Only the ad script is on the page. Its gate waits for a pass that never comes, then gives up. No ads." },
   down: { label: "IVT server unreachable", what: "Every call to ivt.thebesads.com fails. No pass, no ad units, no ads." },
   stolen: { label: "Pass replayed from another network", what: "A valid pass is sent to /v1/ad-units from IP 198.51.100.23 instead of 203.0.113.x. The IP binding fails." },
   otherbrowser: { label: "Pass replayed from a script", what: "A valid pass is sent with User-Agent python-requests. The browser binding fails." },
@@ -179,7 +180,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     try { sent = JSON.parse(typeof init?.body === "string" ? init.body : "{}").adPass; } catch { sent = undefined; }
     if (!currentPass || sent !== currentPass) return new Response(null, { status: 403 }); // left over from a previous simulated page
   }
-  const actor = isAdUnits ? "ads.js → server" : "ivt.js → server";
+  const actor = isAdUnits ? "ad script → server" : "ivt.js → server";
 
   if (state.scenario === "down") {
     log(actor, `POST ${path} · network error`, "deny", "The IVT server could not be reached.");
@@ -263,36 +264,25 @@ head.appendChild = (node: any) => {
     });
     return node;
   }
-  if (node instanceof HTMLScriptElement && node.src === GPT_URL) {
-    log("ads.js", "Loads Google Publisher Tag (stubbed in this demo)", "info");
-    installFakeGpt();
-    node.type = "text/plain"; // inert marker so ads.js sees GPT as already requested
-    return realAppend(node);
-  }
   return realAppend(node);
 };
 
-function installFakeGpt() {
-  const w = window as any;
-  const g = (w.googletag = w.googletag || { cmd: [] });
-  if (g.__demo) return;
-  const targeting: Record<string, unknown> = {};
-  const slots = new Map<string, { path: string; sizes: number[][] }>();
-  Object.assign(g, {
-    __demo: true,
-    pubads: () => ({ setTargeting: (k: string, v: unknown) => { targeting[k] = v; } }),
-    defineSlot: (path: string, sizes: number[][], id: string) => { slots.set(id, { path, sizes }); return { addService() {} }; },
-    enableServices() {},
-    display: (id: string) => renderAd(id, slots.get(id)!, { ...targeting }),
-  });
-  const queue: Array<() => void> = Array.isArray(g.cmd) ? g.cmd : [];
-  g.cmd = { push: (f: () => void) => { f(); return 0; } };
-  queue.forEach((f) => f());
+// Stand-in for Price Optimiser: it starts only with the config the gate returned, and fills
+// matching placeholders. The real PO would load GPT and run its auction here.
+function startAdStack(config: any, runId: number) {
+  if (runId !== currentRun) return 0;
+  const bySlot = new Map<string, any>(config.slots.map((s: any) => [s.div, s]));
+  let filled = 0;
+  for (const el of document.querySelectorAll<HTMLElement>("#site [data-ad-slot]:not(.filled)")) {
+    const slot = bySlot.get(el.getAttribute("data-ad-slot") || "");
+    if (!slot) continue;
+    renderAd(el, slot, config.targeting || {});
+    filled++;
+  }
+  return filled;
 }
 
-function renderAd(id: string, slot: { path: string; sizes: number[][] }, targeting: Record<string, unknown>) {
-  const el = document.getElementById(id);
-  if (!el) return;
+function renderAd(el: HTMLElement, slot: { path: string; sizes: number[][] }, targeting: Record<string, unknown>) {
   const [w, h] = slot.sizes[0];
   el.innerHTML = "";
   const ad = document.createElement("div");
@@ -303,37 +293,27 @@ function renderAd(id: string, slot: { path: string; sizes: number[][] }, targeti
   (ad.querySelector(".ad-kv") as HTMLElement).textContent = Object.entries(targeting).map(([k, v]) => `${k}=${v}`).join(" · ");
   el.appendChild(ad);
   el.classList.add("filled");
-  log("GPT (stub)", `Ad rendered in “${el.getAttribute("data-ad-slot")}” slot`, "pass");
+  log("ad stack (stand-in)", `Ad rendered in “${el.getAttribute("data-ad-slot")}” slot`, "pass");
 }
 
 // ---------- page lifecycle ----------
 
-const observers: MutationObserver[] = [];
-const RealMO = window.MutationObserver;
-(window as any).MutationObserver = class extends RealMO {
-  constructor(cb: MutationCallback) { super(cb); observers.push(this); }
-};
-
+let currentRun = 0;
 let stopTelemetry: (() => void) | undefined;
 let running = false;
 let extraSlots = 0;
 
 function resetPage() {
-  observers.splice(0).forEach((o) => o.disconnect());
+  currentRun++;
   stopTelemetry?.();
   stopTelemetry = undefined;
   const w = window as any;
   delete w.__THEBES_IVT_INIT__;
-  delete w.__THEBES_ADS_INIT__;
-  delete w.googletag;
-  document.querySelectorAll(`script[src="${GPT_URL}"]`).forEach((el) => el.remove());
   guards.clear();
   currentPass = null;
   extraSlots = 0;
   $("#log").innerHTML = "";
   for (const el of document.querySelectorAll("#site [data-ad-slot]")) {
-    el.removeAttribute("data-ad-filled");
-    el.removeAttribute("id");
     el.classList.remove("filled");
     el.innerHTML = "";
   }
@@ -364,8 +344,11 @@ async function loadPage() {
     } else {
       log("page", "ivt.js is missing from the page", "warn");
     }
-    log("page", "ads.js starts and waits for an Ad Pass", "info");
-    const shown = await initAds({ endpoint: ENDPOINT, timeoutMs: 2500 });
+    const runId = currentRun;
+    log("page", "Ad script starts; its gate waits for an Ad Pass", "info");
+    const config = await thebesAdGate({ endpoint: ENDPOINT, timeoutMs: 2500 });
+    if (runId !== currentRun) return;
+    const shown = config ? startAdStack(config, runId) > 0 : false;
     if (shown) {
       const observeOnly = state.mode === "observe" && state.scenario === "bot";
       setVerdict("pass", "Ads shown", observeOnly
@@ -373,7 +356,7 @@ async function loadPage() {
         : "The server approved this visit and handed out the ad units.");
       ($("#more") as HTMLButtonElement).disabled = false;
     } else {
-      log("ads.js", "Stops. No GPT request is made.", "deny");
+      log("ad script", "Gate returned nothing. The ad stack never starts: no GPT, no bids.", "deny");
       setVerdict("deny", "No ads", SCENARIOS[state.scenario].what);
     }
   } finally {
@@ -381,13 +364,17 @@ async function loadPage() {
   }
 }
 
-function addSlot() {
+async function addSlot() {
   extraSlots++;
   const block = document.createElement("div");
   block.className = "extra";
   block.innerHTML = `<h3>More to play: puzzle pack ${extraSlots + 1}</h3><p>Another article loaded by infinite scroll. It brings its own ad placeholder.</p><div class="slot" data-ad-slot="mid"></div>`;
   $("#feed").appendChild(block);
-  log("page", "New placeholder added (infinite scroll). ads.js redeems the same pass again.", "info");
+  log("page", "New placeholder added (infinite scroll). The ad script runs the gate again with the same pass.", "info");
+  const runId = currentRun;
+  const config = await thebesAdGate({ endpoint: ENDPOINT, timeoutMs: 2500 });
+  if (!config) { log("ad script", "Gate refused. The new slot stays empty.", "deny"); return; }
+  startAdStack(config, runId);
 }
 
 // ---------- controls ----------
@@ -419,7 +406,7 @@ function wireControls() {
     $("#url").textContent = `https://gamewhame.com/games/word-sprint${state.aff ? `?aff=${state.aff}` : ""}`;
   });
   $("#load").addEventListener("click", () => void loadPage());
-  $("#more").addEventListener("click", addSlot);
+  $("#more").addEventListener("click", () => void addSlot());
 }
 
 renderScenarios();

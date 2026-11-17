@@ -18,8 +18,9 @@ type Admission = {
 type IVTResult = {
   admitted: boolean;
   monetizationEligible: boolean;
-  // Opaque, short-lived, single-use ticket. ivt.js never interprets it and knows nothing about
-  // what it unlocks; a separate loader exchanges it server-side.
+  // Opaque, short-lived Ad Pass. ivt.js never interprets it and knows nothing about what it
+  // unlocks; the ad stack (e.g. Price Optimiser) exchanges it at /v1/ad-units.
+  // See docs/ad-pass/README.md.
   adPass?: string;
   stopTelemetry?: () => void;
 };

@@ -5,44 +5,42 @@ is slow, or anything is malformed, **no ads load** (fail closed).
 
 Scope: the gating mechanism only. *How* the IVT decides eligibility is out of scope here.
 
+How to integrate it: [README.md](README.md). This document is the design reference.
+
 ## 1. Flow
 
 ```
-Partner page (no GPT tag, no ad unit IDs):
+Page (no ad unit IDs in the HTML):
   <script src="https://ivt.thebesads.com/v1/ivt.js" data-auto-init="true"
           data-endpoint="https://ivt.thebesads.com" data-site-key="gamewhame.com"></script>
-  <script src="https://ivt.thebesads.com/v1/ads.js" async></script>
-  <div data-ad-slot="top"></div>
-  <div data-ad-slot="mid"></div>
+  <script src="<ad stack, e.g. Price Optimiser>" async></script>   ← starts with ad-gate.js
 
 Browser                                    Worker
 ivt.js  ── POST /v1/admit ─────────────▶   score visit (unchanged)
                                            AD_PASS_MODE gate + eligibility
                                            kill switches + site ad config (KV)
         ◀── {..., adPass?} ──────────────   pass only if all OK
-ads.js  ── POST /v1/ad-units {adPass} ──▶   origin allowlist, signature, kid, expiry,
-                                           policy version, origin, IP /24|/64 + UA binding
+ad stack (gate) ─ POST /v1/ad-units ────▶   origin allowlist, signature, kid, expiry,
+                  {adPass}                 policy version, origin, IP /24|/64 + UA binding
                                            kill switches + config re-checked
                                            optional single-use claim (off by default)
         ◀── 403 (empty) ─────────────────   any failure
         ◀── {gpt, networkCode, slots, targeting} (no-store)
-ads.js: load GPT, define slots on [data-ad-slot], set targeting, display
+ad stack: starts only now (GPT, bids, slots, key-values)
 ```
 
-- `ivt.js` only exposes the opaque `adPass` string on its admission result. It contains no GAM
-  URL, ad unit path or slot logic (asserted by `tests/ads-sdk.test.ts`).
-- `ads.js` (`src/sdk/ads.ts`) is a separate bundle. It waits for `window.__THEBES_IVT_INIT__`
-  (or the `thebes:ivt-init` event if it loads first) within one deadline (`data-timeout-ms`,
-  default 8000, clamped 50–20000). It takes the pass off the shared admission result (only the
-  loader holds it), redeems it, and validates the response (exact GPT URL, slot paths under the
-  network code). Any error or timeout → no GPT request. No fallback, no cache.
-- The pass gates only the **config fetch**. Once GPT has the slots, GPT refresh/lazy-load keeps
-  working for as long as the visitor stays; the pass is not checked again for those.
-- Placeholders added later (SPA navigation, infinite scroll) are picked up by a
-  `MutationObserver`: the loader redeems the **same pass** again, so the server re-checks expiry,
-  binding, kill switches and config each time. A refusal fills nothing and stops watching
-  (max 20 refetches per page). Every full page load runs `ivt.js` again and gets a fresh pass.
-- The GPT URL is a server constant; the KV config cannot change which script loads.
+- `ivt.js` only exposes the opaque `adPass` string on its admission result
+  (`window.__THEBES_IVT_INIT__`). It contains no GAM URL, ad unit path or slot logic (asserted by
+  `tests/ivt-adpass.test.ts`). It also sends `?aff=` (see section 5).
+- The ad stack (Price Optimiser, or any script that loads GPT) runs the reference gate
+  [`ad-gate.js`](ad-gate.js) first and starts only if the gate returns a config. Every failure,
+  timeout or refusal returns `null`: no GPT, no bids. No fallback, no cache.
+- The pass gates the **config fetch**. Refreshes of slots already defined are up to the ad stack;
+  to honour kill switches on long visits, run the gate again before adding slots or every few
+  minutes, and stop refreshing on `null`. The server re-checks expiry, binding, kill switches and
+  config on every call. Every full page load runs `ivt.js` again and gets a fresh pass.
+- The GPT URL in the response is a server constant; the KV config cannot change it.
+- The Ad Pass project's own GAM loader (`ads.js`) was removed: the ad stack owns rendering.
 
 ## 2. Modes (`AD_PASS_MODE`)
 
@@ -56,7 +54,7 @@ Eligibility = `CLEAN` + `WOULD_PASS` when the site is in IVT shadow mode (the wo
 or `CLEAN` + `PASS` when the site is in IVT enforce mode. The existing runtime capability,
 telemetry token and `monetization.eligible` field are unchanged in every mode. Unknown values = `off`.
 
-`observe` lets the loader replace hard-coded GPT without losing revenue while GAM reports split
+`observe` lets sites move to gated ad loading without losing revenue while GAM reports split
 revenue by `ivt_e`; switch to `enforce` to actually gate.
 
 ## 3. Token format
@@ -166,7 +164,7 @@ Returned in `/v1/ad-units` `targeting` and set on GPT:
 - `ivt_e` = `1`/`0` eligibility at issuance.
 
 Detection: GAM report of impressions per ad unit by `ivt_k`; impressions where `ivt_k` is missing
-or not today's value = ads loaded without our loader → kill that affiliate. Uses the **current**
+or not today's value = ads loaded without the gate → kill that affiliate. Uses the **current**
 key; rotate `AD_PASS_SECRET` at UTC midnight, or check both keys for the rotation day.
 
 ## 7. Secrets and vars
@@ -208,7 +206,7 @@ Rotation: set `AD_PASS_SECRET_PREVIOUS` = old secret, `AD_PASS_PREVIOUS_KID` = o
 **Honest limit.** Once an approved visitor receives the config, the ad unit paths are visible in
 the browser. A partner can hard-code GPT with those paths for blocked traffic; JavaScript alone
 cannot stop that. Mitigations: per-affiliate ad units (`/net/aff_42/...`) make abuse attributable
-and one-click revocable in GAM; `ivt_k` exposes impressions served without our loader (missing or
+and one-click revocable in GAM; `ivt_k` exposes impressions served without the gate (missing or
 stale value) in GAM reports; impressions per affiliate should be ≤ passes redeemed × slots. To make
 bypass physically impossible, add the edge add-on (Worker strips partner ad tags + CSP).
 
@@ -220,8 +218,8 @@ gets no ads for that pageview.
 1. `wrangler secret put AD_PASS_SECRET` (keep `AD_PASS_MODE=off`). Deploy. No behaviour change.
 2. Create per-affiliate ad units in GAM; write `adunits:site:<siteKey>` for one site; make every
    affiliate link carry `?aff=<id>` (decide per site whether organic traffic gets `house` units).
-3. Set `AD_PASS_MODE=observe`. On that site: remove hard-coded GPT/ad unit IDs, add `ads.js` and
-   `data-ad-slot` placeholders. Watch fill, `ivt_e` split and `ivt_k` coverage in GAM.
+3. Set `AD_PASS_MODE=observe`. On that site: remove hard-coded ad unit IDs and make the ad stack
+   start through `ad-gate.js`. Watch fill, `ivt_e` split and `ivt_k` coverage in GAM.
 4. Add the daily GAM report job for missing/stale `ivt_k` (not in this repo yet).
 5. Set `AD_PASS_MODE=enforce` once the eligibility policy is trusted. Roll site by site
    (sites without config get no ads, so onboard config before moving a site's tags).
@@ -230,12 +228,12 @@ gets no ads for that pageview.
 ## 10. Pending database changes
 
 Attribution, audit and GAM reconciliation tables are proposed (not applied) in
-[AD_PASS_DB_CHANGES.md](AD_PASS_DB_CHANGES.md), to ship together in one migration.
+[DB_CHANGES.md](DB_CHANGES.md), to ship together in one migration.
 
 ## 11. Demo page
 
 `npm run build:demo` writes `.wrangler/demo/ad-pass-demo.html`: one self-contained page that runs
-the real Worker and SDK code in the browser (in-memory KV/D1/DO, demo keys, GPT stubbed, no real
-ad requests). It covers each visitor scenario, the mode switch, kill switches, config states and
+the real Worker, `ivt.js` and `ad-gate.js` in the browser (in-memory KV/D1/DO, demo keys, an ad
+stack stand-in, no real ad requests). It covers each visitor scenario, the mode switch, kill switches, config states and
 late (infinite-scroll) slots. Serve it over `http://*.localhost` or HTTPS: Web Crypto needs a
 secure context. The output is never written to `public/`, so it cannot ship with the Worker.

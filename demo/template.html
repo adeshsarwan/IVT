@@ -115,7 +115,7 @@ button:focus-visible, select:focus-visible, .choice:has(input:focus-visible) { o
   <header class="top">
     <h1>Ad Pass Demo</h1>
     <p>Ads load only after the IVT server approves the visit. Pick a visitor, set the server switches, and load the page to see who gets ads and why.</p>
-    <p class="note">This page runs the real Worker and browser code from branch <code>chandra/ad-pass</code> inside your browser. Calls to <code>ivt.thebesads.com</code> are answered in-page with demo keys and in-memory storage. Google's ad script is stubbed, so no real ad requests are made.</p>
+    <p class="note">This page runs the real Worker and browser code from branch <code>chandra/ad-pass</code> inside your browser, including the reference ad gate that Price Optimiser or any ad script would paste in. Calls to <code>ivt.thebesads.com</code> are answered in-page with demo keys and in-memory storage. The ad stack is a stand-in that draws placeholder ads, so no real ad requests are made.</p>
   </header>
 
   <div class="grid">
@@ -194,4 +194,5 @@ button:focus-visible, select:focus-visible, .choice:has(input:focus-visible) { o
   </div>
 </div>
 
+<script>/*__GATE__*/</script>
 <script>/*__BUNDLE__*/</script>
