@@ -2,8 +2,9 @@ import { getNetworkIntel, observeOnlyNetworkRisk } from "./network";
 import { evaluateIdentityRisk } from "./identity";
 import { monetizationEligibility } from "./eligibility";
 import { type AdPassEnv, affiliateFromAttribution, handleAdCheck, maybeIssueAdPass } from "./adpass";
+import { type ProvenanceEnv, buildLanding, sendLanding } from "./provenance-hook";
 
-export interface Env extends AdPassEnv {
+export interface Env extends AdPassEnv, ProvenanceEnv {
   DB: D1Database;
   IVT_CONFIG: KVNamespace;
   REPLAY_GUARD: DurableObjectNamespace;
@@ -259,7 +260,7 @@ async function storeComponent(env: Env, sessionId: string, component: string, va
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/health") return json({ ok: true, service: "thebes-ivt", mode: env.IVT_MODE, evidenceVersion: "v2" });
 
@@ -376,6 +377,14 @@ export default {
         await env.DB.prepare("INSERT INTO click_reconciliation (session_id, platform, status) VALUES (?, ?, 'CAPTURED')")
           .bind(sessionId, source.sourceClass.replace("_PAID", "")).run();
       }
+
+      // Traffic Provenance (Hook A2): queue the landing for the separate provenance pipeline.
+      // Off unless PROVENANCE_MODE=on and PROVENANCE_Q is bound; fire-and-forget, never blocks or fails admit.
+      // Sent before the BLOCK return so blocked landings are counted too.
+      sendLanding(env, ctx, buildLanding({
+        sessionId, now, siteHost: normalizeHostname(site.hostname), href: body.page?.href, attribution: body.attribution,
+        aff: affiliateFromAttribution(body.attribution), ipHash, uaHash: userAgentHash, ua,
+      }));
 
       if (mode !== "shadow" && decision === "BLOCK") return json({ status: "NO_RUNTIME" }, 200, origin);
 

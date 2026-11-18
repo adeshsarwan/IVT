@@ -59,7 +59,10 @@ function browserEvidence() {
 
 function attributionEvidence() {
   const p = new URLSearchParams(location.search);
-  const keys = ["gclid", "gbraid", "wbraid", "fbclid", "ttclid", "ScCid", "utm_source", "utm_medium", "utm_campaign", "utm_id"];
+  // cid / ag / net / dev / plc / route come from the partner's Google tracking template and feed
+  // Traffic Provenance (Hook A1): campaign, ad group, network, device and placement checks.
+  const keys = ["gclid", "gbraid", "wbraid", "fbclid", "ttclid", "ScCid", "utm_source", "utm_medium", "utm_campaign", "utm_id",
+    "cid", "ag", "net", "dev", "plc", "route"];
   const out: Record<string, string> = {};
   for (const key of keys) {
     const value = p.get(key);

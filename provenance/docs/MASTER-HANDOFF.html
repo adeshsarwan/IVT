@@ -48,6 +48,9 @@ tr:last-child td{border-bottom:0}
 .steps>li{counter-increment:s;position:relative;padding:10px 12px 10px 46px;background:var(--card);border:1px solid var(--line);border-radius:8px;margin:8px 0}
 .steps>li::before{content:counter(s);position:absolute;left:12px;top:10px;width:24px;height:24px;border-radius:50%;background:var(--soft);color:var(--accent);font:700 13px/24px var(--f-display);text-align:center}
 .who{font:600 11px var(--f-body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-left:6px}
+.tag{display:inline-block;font:600 11px/1.4 var(--f-body);padding:1px 7px;border-radius:4px;margin-right:4px}
+.t-old{background:var(--line);color:var(--ink)} .t-new{background:var(--soft);color:var(--accent)}
+td code{white-space:nowrap}
 .check{list-style:none;padding:0} .check li::before{content:"☐ ";color:var(--accent)}
 svg{display:block;width:100%;height:auto}
 svg text{fill:var(--ink);font:13px var(--f-body)}
@@ -63,9 +66,9 @@ svg .hook{stroke:var(--accent);stroke-width:2.2;fill:none;marker-end:url(#ah2)}
 </style>
 
 <main>
-<div class="eyebrow">IVT · Traffic Provenance · master document · 2026-11-18</div>
+<div class="eyebrow">IVT · Traffic Provenance · partner handoff · 2026-11-18</div>
 <h1>Traffic Provenance Handoff</h1>
-<p class="lede">Checks whether an affiliate's visitors really came from the Google ads they claim to have bought. This page covers what it is, how it fits with the existing IVT and Ad Pass, how we get Google's data (the token), what's built, and what's left before going live.</p>
+<p class="lede">Checks whether an affiliate's visitors really came from the Google ads they claim to have bought. Written for a reviewer new to the code: what was already in the IVT before, what we added, how the pieces connect, how the data is stored, and what's left before going live.</p>
 
 <div class="card">
 <h3 style="margin-top:0">In one minute</h3>
@@ -73,8 +76,9 @@ svg .hook{stroke:var(--accent);stroke-width:2.2;fill:none;marker-end:url(#ah2)}
   <li><b>Problem:</b> an affiliate can send bots, porn-site or junk traffic and call it "Google Ads". Google then penalises <b>our</b> ad account.</li>
   <li><b>Check:</b> every real Google ad click carries a unique <code>gclid</code>, and Google keeps a list of every gclid it billed. Each day we pull that list and match it against the gclids that reached our sites. We also compare counts: our visits vs Google's clicks.</li>
   <li><b>Result per affiliate:</b> <span class="pill p-ok">OK</span> <span class="pill p-warn">WATCH</span> <span class="pill p-warn">THROTTLE</span> <span class="pill p-bad">BLOCK</span>. A BLOCK is only a <b>recommendation</b>: a person reviews it and turns ads off for that affiliate by hand.</li>
-  <li><b>Fit:</b> a separate service. It needs two small hooks in the existing code (forward each landing; read the kill switch, which Ad Pass already does).</li>
-  <li><b>Status:</b> logic, database, batch job and tests are built and run locally against a fake Google API. Not deployed. No real Google token yet. Google only; Meta later.</li>
+  <li><b>Manual for now:</b> while we validate the results, nothing is blocked automatically. People review every BLOCK. Automatic blocking is one config switch for later (section 5).</li>
+  <li><b>Fit:</b> a separate service. The existing code got one small change (Hook A, built, <b>off by default</b>). The kill switch it acts through (Hook B) already existed in Ad Pass.</li>
+  <li><b>Status:</b> engine, ClickHouse storage, batch job, Hook A and tests are built and run locally against a fake Google API. Not deployed. No real Google token yet. Google only; Meta later.</li>
 </ul>
 </div>
 
@@ -89,8 +93,30 @@ svg .hook{stroke:var(--accent);stroke-width:2.2;fill:none;marker-end:url(#ah2)}
 </div>
 <p class="muted small">The IVT judges <i>one visit</i>. Provenance judges <i>an affiliate's traffic over thousands of visits</i>, using Google's own records. They catch different fraud: a perfect human browser on a porn placement passes the IVT but fails Provenance.</p>
 
-<h2><span class="n">2</span>Integration decision: keep it independent</h2>
-<p>Your feeling is right. Provenance should be its own service, joined to the rest by two thin hooks.</p>
+<h2><span class="n">2</span>What already existed, what we added</h2>
+<p><span class="tag t-old">EXISTED</span> was in the code before this work and is unchanged. <span class="tag t-new">ADDED</span> is new from this work.</p>
+<div class="card scroll">
+<table>
+<tr><th></th><th>Part</th><th>What it does</th><th>Where</th></tr>
+<tr><td><span class="tag t-old">EXISTED</span></td><td>IVT SDK</td><td>Script on our sites. Collects browser evidence and the click ids in the URL, then calls <code>/v1/admit</code>.</td><td><code>src/sdk/ivt.ts</code></td></tr>
+<tr><td><span class="tag t-old">EXISTED</span></td><td>IVT Worker</td><td>Scores each visit (network, browser, identity, behaviour). Stores sessions in D1, with the gclid <b>hashed</b>.</td><td><code>src/worker.ts</code>, <code>migrations/</code></td></tr>
+<tr><td><span class="tag t-old">EXISTED</span></td><td>Ad Pass</td><td>Issues a 30-minute pass on admit. <code>/v1/ad-check</code> answers yes or no for ads.</td><td><code>src/adpass.ts</code></td></tr>
+<tr><td><span class="tag t-old">EXISTED</span></td><td>Kill switches</td><td>KV keys <code>ads:global</code>, <code>ads:site:&lt;key&gt;</code>, <code>ads:aff:&lt;id&gt;</code>. Set one to <code>off</code> and Ad Pass stops ads for it.</td><td>KV <code>IVT_CONFIG</code></td></tr>
+<tr><td><span class="tag t-old">EXISTED</span></td><td><code>?aff=</code> affiliate id</td><td>The SDK reads it, remembers it for the tab, and Ad Pass checks it.</td><td><code>src/sdk/ivt.ts</code>, <code>src/adpass.ts</code></td></tr>
+<tr><td><span class="tag t-new">ADDED</span></td><td>Hook A1 · SDK keys</td><td>The SDK also forwards <code>cid</code>, <code>ag</code>, <code>net</code>, <code>dev</code>, <code>plc</code> and <code>route</code>, the values from the partner's Google tracking template.</td><td><code>src/sdk/ivt.ts</code> (key list)</td></tr>
+<tr><td><span class="tag t-new">ADDED</span></td><td>Hook A2 · landing to queue</td><td><code>/v1/admit</code> puts each landing on a queue: session id, time, site, aff, full URL, hashed IP and UA, device. Fire-and-forget. <b>Off</b> unless <code>PROVENANCE_MODE=on</code> and a <code>PROVENANCE_Q</code> queue is bound.</td><td><code>src/provenance-hook.ts</code>, 8 lines in <code>src/worker.ts</code></td></tr>
+<tr><td><span class="tag t-new">ADDED</span></td><td>Rules engine</td><td>Turns landings plus Google's data into OK / WATCH / THROTTLE / BLOCK per affiliate. Pure code, no I/O.</td><td><code>provenance/src/</code></td></tr>
+<tr><td><span class="tag t-new">ADDED</span></td><td>Google Ads client</td><td>Read-only. Pulls every click (<code>click_view</code>) and daily click totals for each account.</td><td><code>provenance/pipeline/googleAds.ts</code></td></tr>
+<tr><td><span class="tag t-new">ADDED</span></td><td>ClickHouse storage</td><td>Raw landings and Google clicks, matched with SQL (section 6).</td><td><code>provenance/pipeline/clickhouse/</code></td></tr>
+<tr><td><span class="tag t-new">ADDED</span></td><td>Batch job + Provenance Worker</td><td>Runs every 6 hours, one queue message per partner. Separate from the IVT Worker.</td><td><code>provenance/pipeline/job.ts</code>, <code>worker.ts</code></td></tr>
+<tr><td><span class="tag t-new">ADDED</span></td><td>Review queue (D1)</td><td>Holds BLOCK recommendations for a person to apply or dismiss.</td><td><code>provenance/pipeline/d1/0001_provenance.sql</code></td></tr>
+<tr><td><span class="tag t-new">ADDED</span></td><td>Tests, local runner, demo</td><td>127 Provenance tests and 5 Hook A tests. A local run against a fake Google API. A browser lab.</td><td><code>provenance/tests/</code>, <code>tests/provenance-hook.test.ts</code></td></tr>
+</table>
+</div>
+<p class="muted small"><b>Not changed:</b> IVT scoring, D1 IVT tables, Ad Pass logic, KV keys, <code>wrangler.jsonc</code> and migrations. With <code>PROVENANCE_MODE</code> unset, the Worker behaves exactly as before.</p>
+
+<h2><span class="n">3</span>How it connects: an independent service, two hooks</h2>
+<p>Provenance is its own service. It is joined to the existing code at two points: Hook A brings data in, and Hook B acts on the result.</p>
 
 <div class="card scroll">
 <svg viewBox="0 0 900 390" role="img" aria-label="Visitors go through the SDK to the IVT and Ad Pass Worker; hook A forwards each landing to a queue; the separate Provenance Worker pulls Google clicks, matches in ClickHouse and puts BLOCKs in a review queue; a person sets the kill switch in KV, which Ad Pass already reads" style="min-width:720px">
@@ -108,7 +134,7 @@ svg .hook{stroke:var(--accent);stroke-width:2.2;fill:none;marker-end:url(#ah2)}
 
   <!-- hook A -->
   <path class="hook" d="M285 134 V230 H560"/>
-  <text x="300" y="168" style="font-weight:700;fill:var(--accent)">Hook A</text><text class="m" x="300" y="184">forward each landing</text><text class="m" x="300" y="198">(1 line, never blocks)</text>
+  <text x="300" y="168" style="font-weight:700;fill:var(--accent)">Hook A</text><text class="m" x="300" y="184">forward each landing</text><text class="m" x="300" y="198">(added · off by default)</text>
 
   <text class="m" x="560" y="22">NEW · separate Worker, every 6 hours</text>
   <rect class="g" x="550" y="30" width="340" height="340" rx="12"/>
@@ -127,7 +153,7 @@ svg .hook{stroke:var(--accent);stroke-width:2.2;fill:none;marker-end:url(#ah2)}
   <text x="470" y="262" style="font-weight:700;fill:var(--accent)">Hook B</text>
   <text class="mono" x="40" y="320">KV  ads:aff:42 = off</text>
   <text class="m" x="40" y="340">Ad Pass already reads this key.</text>
-  <text class="m" x="40" y="356">Nothing new to build here.</text>
+  <text class="m" x="40" y="356">Already existed. Nothing new built.</text>
 </svg>
 </div>
 
@@ -145,20 +171,26 @@ svg .hook{stroke:var(--accent);stroke-width:2.2;fill:none;marker-end:url(#ah2)}
   </ul></div>
 </div>
 
-<h3>The only changes needed in existing code</h3>
+<h3>The changes to existing code</h3>
 <div class="card scroll">
 <table>
-<tr><th>Hook</th><th>Where</th><th>Change</th><th>Size</th></tr>
-<tr><td><b>A1</b></td><td>SDK <code>src/sdk/ivt.ts</code> → <code>attributionEvidence()</code></td><td>Also forward <code>cid</code>, <code>ag</code>, <code>net</code>, <code>dev</code>, <code>plc</code> (Google tracking-template values) and the route key.</td><td>1 line (key list)</td></tr>
-<tr><td><b>A2</b></td><td>Worker <code>/v1/admit</code></td><td><code>ctx.waitUntil(env.PROVENANCE_Q.send(…))</code> with session id, time, site, aff, the landing parameters, hashed IP and UA. Failures are ignored, never blocks.</td><td>~10 lines + queue binding</td></tr>
-<tr><td><b>B</b></td><td>KV <code>ads:aff:&lt;id&gt;</code></td><td>None. Ad Pass already turns ads off for that affiliate on every site.</td><td>0</td></tr>
+<tr><th>Hook</th><th>Where</th><th>Change</th><th>State</th></tr>
+<tr><td><b>A1</b></td><td>SDK <code>src/sdk/ivt.ts</code> → <code>attributionEvidence()</code></td><td>Also forward <code>cid</code>, <code>ag</code>, <code>net</code>, <code>dev</code>, <code>plc</code> (Google tracking-template values) and the route key.</td><td><span class="pill p-ok">built</span></td></tr>
+<tr><td><b>A2</b></td><td>Worker <code>/v1/admit</code> → <code>src/provenance-hook.ts</code></td><td><code>ctx.waitUntil(env.PROVENANCE_Q.send(…))</code> with session id, time, site, aff, the full landing URL, hashed IP and UA, and device. Sent before the BLOCK return, so blocked visits are counted too. A queue error is ignored: admit never waits and never fails because of it.</td><td><span class="pill p-ok">built · off</span><br><span class="small muted">to switch on: add the queue binding and <code>PROVENANCE_MODE=on</code></span></td></tr>
+<tr><td><b>B</b></td><td>KV <code>ads:aff:&lt;id&gt;</code></td><td>None. Ad Pass already turns ads off for that affiliate on every site.</td><td><span class="pill p-acc">existed</span></td></tr>
 <tr><td class="muted">later</td><td>Ad Pass</td><td>Read a THROTTLE key (e.g. <code>adcap:aff:&lt;id&gt;</code> = fewer ads) if we want a middle step between on and off.</td><td>open</td></tr>
 <tr><td class="muted">later</td><td>IVT scoring</td><td>Use the affiliate's Provenance tier as one input to the visit's source risk.</td><td>optional</td></tr>
 </table>
 </div>
+<p class="small muted">What Hook A2 puts on the queue, one message per landing:</p>
+<pre>{ "type": "landings", "rows": [{
+    "id": "&lt;admit session id&gt;", "ts": 1763470000000, "site": "gamewhame.com", "aff": "42", "route": "g42",
+    "url": "https://gamewhame.com/x?aff=42&amp;gclid=Cj0KCQi…&amp;cid=111&amp;ag=222&amp;net=g&amp;dev=m&amp;plc=",
+    "ipHash": "&lt;HMAC, same as IVT&gt;", "uaHash": "&lt;HMAC&gt;", "uaDevice": "mobile" }] }</pre>
+<p class="small muted">The raw IP never leaves the IVT Worker. The gclid travels raw because Google's list is raw (see the decision below).</p>
 <div class="callout"><b>Decision needed:</b> store the raw gclid in ClickHouse (simplest), or store an HMAC of it and hash Google's gclids with the same key before matching (no raw IDs at rest). Both work with the current code shape; the second needs the hash key shared with the Provenance Worker.</div>
 
-<h2><span class="n">3</span>How the gclid check works</h2>
+<h2><span class="n">4</span>How the gclid check works</h2>
 <div class="grid">
   <div class="card"><h4>Match every gclid</h4><p>Each gclid that reached us is looked up in Google's list for that affiliate's account.</p><ul>
     <li><b>matched:</b> real paid click</li>
@@ -178,10 +210,69 @@ svg .hook{stroke:var(--accent);stroke-width:2.2;fill:none;marker-end:url(#ah2)}
 </div>
 <p class="muted small">Verdicts use 95% confidence ranges and minimum sample sizes, so a small or noisy day never blocks anyone. Full rules: <code>provenance/README.md</code>. Visual explainer: <code>docs/06-traffic-provenance-simple.html</code>.</p>
 
-<h2><span class="n">4</span>Getting Google's data: the token</h2>
+<h2><span class="n">5</span>Manual for now, automated later</h2>
+<div class="callout"><b>For now, Traffic Provenance is manual.</b> The system recommends; a person decides. We want to see real results line up with what we know about each partner before any traffic is cut off automatically.</div>
+<div class="grid">
+  <div class="card"><h4>Now · validation</h4><ol>
+    <li>The job finds BLOCK for an affiliate.</li>
+    <li>It opens one review item in D1 (<code>provenance_review</code>) with the evidence: match rate, foreign and malformed gclids, visits per click, placements.</li>
+    <li>A person checks it against the partner's own Google Ads UI.</li>
+    <li>If it's confirmed, they set the kill switch by hand:<br><code>npx wrangler kv key put --binding IVT_CONFIG "ads:aff:42" off --remote</code></li>
+    <li>Unblocking is also manual.</li>
+  </ol><p class="small muted">Nothing is ever written to KV by the job. This is the code default: <code>enforcement.autoBlock = false</code>.</p></div>
+  <div class="card"><h4>Later · automated</h4><ul>
+    <li>Once thresholds are tuned and no false BLOCKs appear on partners we trust, set <code>enforcement.autoBlock = true</code>.</li>
+    <li>The job then writes <code>ads:aff:&lt;id&gt; = off</code> itself, using the same evidence and circuit breaker (2 bad windows, or one very clear one).</li>
+    <li>Recommended: automate one tier at a time (e.g. only "foreign/forged gclids" first), keep the audit log, and alert on every automatic block.</li>
+    <li>No other code change is needed; the switch already exists and is tested.</li>
+  </ul></div>
+</div>
+
+<h2><span class="n">6</span>ClickHouse data structure</h2>
+<p>ClickHouse holds the large raw data, hundreds of millions of rows. D1 holds only the small state: verdicts, partners and the review queue. Every raw table deletes its rows automatically after a set time (TTL).</p>
+<div class="card scroll">
+<table>
+<tr><th>Table</th><th>One row per</th><th>Key columns</th><th>Engine · sort key · kept</th></tr>
+<tr><td><b><code>landings</code></b></td><td>visit to our site (from Hook A2)</td><td><code>id</code>, <code>ts</code>, <code>site</code>, <code>aff</code>, <code>route</code>, <code>url</code>, <code>ip_hash</code>, <code>ua_hash</code>, <code>ua_device</code>, <code>gclid</code> (taken from <code>url</code> automatically on insert)</td><td>ReplacingMergeTree · <code>(aff, ts, id)</code> · daily partitions · <b>90 days</b></td></tr>
+<tr><td><b><code>google_clicks</code></b></td><td>click Google billed (from <code>click_view</code>)</td><td><code>aff</code>, <code>customer_id</code>, <code>date</code>, <code>gclid</code>, <code>campaign_id</code>, <code>ad_group_id</code>, <code>device</code>, <code>click_type</code>, <code>ad_network_type</code>, <code>imported_at</code></td><td>ReplacingMergeTree(<code>imported_at</code>) · <code>(aff, date, gclid)</code> · monthly partitions · <b>90 days</b></td></tr>
+<tr><td><b><code>google_daily</code></b></td><td>account × day × campaign × network</td><td><code>aff</code>, <code>customer_id</code>, <code>date</code>, <code>campaign_id</code>, <code>ad_network_type</code>, <code>clicks</code> (Google's own total)</td><td>ReplacingMergeTree · <b>400 days</b></td></tr>
+<tr><td><b><code>google_sync</code></b></td><td>account × day sync attempt</td><td><code>status</code> (ok / no_access / error), <code>click_rows</code>, <code>daily_clicks</code>, <code>time_zone</code>, <code>auto_tagging</code>, <code>error</code>, <code>synced_at</code></td><td>ReplacingMergeTree(<code>synced_at</code>) · <b>400 days</b></td></tr>
+</table>
+</div>
+<ul>
+  <li><b>No duplicates:</b> the tables are <i>Replacing</i>: re-syncing a day replaces it, and the newest import wins.</li>
+  <li><b>Fast gclid lookups:</b> both <code>gclid</code> columns have a bloom-filter index.</li>
+  <li><b>Safe queries:</b> every value is sent as a bound parameter (<code>{d:Date}</code>), never pasted into SQL.</li>
+  <li><b>Size:</b> about 5M landings + 5M Google clicks a day for 100 partners, roughly 300M rows a month and around 30–60 bytes per row compressed <span class="pill p-warn">verify on real data</span>.</li>
+</ul>
+<h3>The match, in SQL (simplified)</h3>
+<pre>-- our gclids for the day vs Google's clicks; "owners" = which affiliates' accounts Google billed the gclid to
+WITH L AS (SELECT aff, gclid FROM landings WHERE toDate(ts, {tz}) = {d}),
+     G AS (SELECT gclid, groupUniqArray(aff) AS owners FROM google_clicks FINAL
+           WHERE date BETWEEN {d} - 1 AND {d} + 1 GROUP BY gclid)
+SELECT aff,
+  count()                                                AS landings,
+  countIf(gclid != '' AND NOT match(gclid, '^[A-Za-z0-9_-]{20,512}$')) AS malformed,
+  countIf(has(owners, aff))                              AS matched,   -- real paid click
+  countIf(notEmpty(owners) AND NOT has(owners, aff))     AS foreign    -- copied from another affiliate
+FROM L LEFT JOIN G USING gclid GROUP BY aff;
+-- plus: Google clicks with no landing (unlanded share), and landings ÷ google_daily.clicks</pre>
+<h3>Small state in D1 (Provenance Worker only)</h3>
+<div class="card scroll">
+<table>
+<tr><th>Table</th><th>Holds</th></tr>
+<tr><td><code>provenance_partner</code></td><td>Affiliate id, Google account ids, access type (<code>mcc</code> / <code>oauth</code>), and a secret <i>name</i>, never the token itself.</td></tr>
+<tr><td><code>provenance_breaker</code></td><td>Current tier and circuit-breaker state per affiliate, plus the cursor (how far landings have been read).</td></tr>
+<tr><td><code>provenance_window</code></td><td>Every evaluated window: status, tier, reasons and stats (the audit trail).</td></tr>
+<tr><td><code>provenance_review</code></td><td>Review queue: suggested <code>ads:aff:&lt;id&gt; = off</code>, reasons, status (open / applied / dismissed), who decided and when. At most one open item per affiliate.</td></tr>
+</table>
+</div>
+<p class="small muted">These are kept outside the main <code>migrations/</code> folder on purpose. Apply them only once the pipeline is approved.</p>
+
+<h2><span class="n">7</span>Getting Google's data: the token</h2>
 <p>Recommended model: <b>one</b> set of Google credentials owned by us. Each partner gives that one Google login <b>read-only</b> access to their ad accounts. No per-partner tokens to collect, rotate or lose.</p>
 
-<h3>One-time setup on our side <span class="who">owner: you · about 1 hour + Google's review</span></h3>
+<h3>One-time setup on our side <span class="who">owner: us · about 1 hour + Google's review</span></h3>
 <ol class="steps">
   <li><b>Create a dedicated Google account</b> for data access, e.g. <code>ads-data@yourcompany.com</code>. Not a personal account; it should outlive any one employee. Turn on 2-step verification.</li>
   <li><b>Create a Google Ads manager account (MCC)</b> while signed in as that account: <code>ads.google.com/home/tools/manager-accounts</code>. It's free. It's needed to apply for API access.</li>
@@ -213,23 +304,23 @@ GADS_MCC_ID              the manager account id (digits)</pre>
   <li>Tell us every Google Ads account id (customer id) they send traffic from. Traffic claiming an account we can't read is treated as unverified.</li>
 </ul>
 
-<h3>How I (Claude) get the data to test with real accounts</h3>
+<h3>First test with real data</h3>
 <ul>
-  <li>You put the five secrets in <code>repo-provenance/.dev.vars</code> yourself (git-ignored). Don't paste them into chat.</li>
+  <li>The five secrets go in a git-ignored <code>.dev.vars</code> file, typed in by the account owner. Never paste them into chat, tickets or email.</li>
   <li>One partner adds the data email as read-only.</li>
-  <li>With your explicit go-ahead, I run a <b>read-only dry run</b> for that one account: pull one day of clicks into the local ClickHouse and show the match report. Nothing is written to KV or production.</li>
+  <li>With the owner's go-ahead, run a <b>read-only dry run</b> for that one account: pull one day of clicks into the local ClickHouse and show the match report. Nothing is written to KV or production.</li>
   <li>Until then, every run uses the fake Google API. No real Google calls have been made.</li>
 </ul>
 
-<h2><span class="n">5</span>How it runs</h2>
+<h2><span class="n">8</span>How it runs</h2>
 <div class="card scroll">
 <table>
 <tr><th>Step</th><th>What happens</th><th>Where</th></tr>
-<tr><td>Collect</td><td>Hook A sends each landing to a queue; the consumer inserts batches into ClickHouse <code>landings</code>.</td><td>Queue → ClickHouse</td></tr>
+<tr><td>Collect</td><td>Hook A2 sends each landing to a queue; the Provenance Worker inserts them into ClickHouse <code>landings</code> in batches.</td><td>Queue → ClickHouse</td></tr>
 <tr><td>Sync</td><td>Every 6 h, one job per partner pulls <b>every</b> click of yesterday and the day before (Google adds late clicks), plus Google's own click totals. Re-running replaces the day, so there are no duplicates.</td><td>Google Ads API → ClickHouse</td></tr>
 <tr><td>Match</td><td>ClickHouse joins our gclids to Google's clicks; the rules engine turns windows of 5,000 visits (or 24 h) into verdicts.</td><td>ClickHouse + engine</td></tr>
 <tr><td>Decide</td><td>Circuit breaker: escalates fast, recovers slowly. BLOCK needs 2 bad windows or one very clear one.</td><td>D1</td></tr>
-<tr><td>Review</td><td>A BLOCK opens a review item with the evidence. A person applies or dismisses it. Unblocking is also manual.</td><td>D1 → person → KV</td></tr>
+<tr><td>Review</td><td>A BLOCK opens a review item with the evidence. A person applies or dismisses it; unblocking is also manual (section 5).</td><td>D1 → person → KV</td></tr>
 </table>
 </div>
 <ul>
@@ -251,22 +342,22 @@ GADS_MCC_ID              the manager account id (digits)</pre>
 </table>
 </div>
 
-<h2><span class="n">6</span>Rollout plan</h2>
+<h2><span class="n">9</span>Rollout plan</h2>
 <div class="card scroll">
 <table>
 <tr><th>Phase</th><th>What</th><th>Exit when</th></tr>
 <tr><td><b>0 · Access</b></td><td>Data account, MCC, developer token, Cloud project, ClickHouse Cloud account. Partner terms updated.</td><td>Basic access approved; 1 partner gives read-only access</td></tr>
 <tr><td><b>1 · Dry run</b></td><td>Read-only pull for 1 partner into local ClickHouse; compare with their own Google Ads UI numbers.</td><td>Daily totals match Google's UI</td></tr>
-<tr><td><b>2 · Shadow</b></td><td>Deploy the Provenance Worker + hooks A1/A2. Verdicts computed, no reviews acted on. Tune thresholds.</td><td>2–4 weeks; no false BLOCKs on partners we trust</td></tr>
+<tr><td><b>2 · Shadow</b></td><td>Deploy the Provenance Worker; add the queue binding and turn on <code>PROVENANCE_MODE</code> on the IVT Worker. Verdicts computed, no reviews acted on. Tune thresholds.</td><td>2–4 weeks; no false BLOCKs on partners we trust</td></tr>
 <tr><td><b>3 · Manual blocking</b></td><td>Review queue live; people act on BLOCKs. Onboard partners in batches.</td><td>Stable; review load manageable</td></tr>
-<tr><td class="muted">4 · Later</td><td>THROTTLE key in Ad Pass, optional automatic blocking, Meta.</td><td>–</td></tr>
+<tr><td class="muted">4 · Later</td><td>Automatic blocking (<code>autoBlock = true</code>), THROTTLE key in Ad Pass, Meta.</td><td>–</td></tr>
 </table>
 </div>
 
-<h2><span class="n">7</span>Still to build or decide before going live</h2>
+<h2><span class="n">10</span>Still to build or decide before going live</h2>
 <div class="grid">
   <div class="card"><h4>To build</h4><ul>
-    <li>Hooks A1 + A2 in the SDK and <code>/v1/admit</code></li>
+    <li>Queue <code>provenance</code> + binding <code>PROVENANCE_Q</code> on the IVT Worker (not added to <code>wrangler.jsonc</code> yet, on purpose)</li>
     <li>Review page: list open items with evidence; <b>Apply</b> writes the KV key and an audit log entry; <b>Dismiss</b> with a reason</li>
     <li>Alerts on new review items (Slack or email)</li>
     <li>Partner registry: add a partner, their account ids, which access option, status (last sync, errors)</li>
@@ -289,23 +380,25 @@ GADS_MCC_ID              the manager account id (digits)</pre>
   </ul></div>
 </div>
 
-<h2><span class="n">8</span>Handoff: code, commands, docs</h2>
+<h2><span class="n">11</span>Handoff: code, commands, docs</h2>
 <div class="card scroll">
 <table>
 <tr><th>What</th><th>Where</th></tr>
-<tr><td>Branch (local commits, not pushed)</td><td><code>chandra/traffic-provenance</code> in worktree <code>repo-provenance/</code>, branched from <code>chandra/ad-pass</code>. Never <code>main</code>.</td></tr>
+<tr><td>Branch (local commits, not pushed)</td><td><code>chandra/traffic-provenance</code> in worktree <code>repo-provenance/</code>, on top of the current <code>chandra/ad-pass</code>. Never <code>main</code>.</td></tr>
 <tr><td>Rules engine (pure code)</td><td><code>provenance/src/</code></td></tr>
 <tr><td>Pipeline: ClickHouse schema + client, Google Ads client, batch job, Worker entry, D1 schema</td><td><code>provenance/pipeline/</code></td></tr>
-<tr><td>Tests (133 Provenance + 147 existing, all green)</td><td><code>provenance/tests/</code></td></tr>
+<tr><td>Hook A (SDK keys + admit → queue)</td><td><code>src/provenance-hook.ts</code>, <code>src/worker.ts</code>, <code>src/sdk/ivt.ts</code></td></tr>
+<tr><td>Tests (127 Provenance + 153 IVT/Ad Pass incl. 5 for Hook A, all green)</td><td><code>provenance/tests/</code>, <code>tests/provenance-hook.test.ts</code></td></tr>
 <tr><td>Browser lab: 18 scenarios, 100-partner view</td><td><code>provenance/demo/index.html</code></td></tr>
 <tr><td>Rules, formulas, every reason code; pipeline section 12</td><td><code>provenance/README.md</code></td></tr>
 <tr><td>Partner access details</td><td><code>provenance/docs/PARTNER_DATA_ACCESS.md</code></td></tr>
-<tr><td>Visual explainer · this document</td><td><code>provenance/docs/</code> and <code>docs/</code> (06 and 00)</td></tr>
+<tr><td>Visual explainer · this document</td><td><code>provenance/docs/SIMPLE-EXPLAINER.html</code> · <code>provenance/docs/MASTER-HANDOFF.html</code></td></tr>
 </table>
 </div>
 <p><b>Run locally</b> (needs Docker):</p>
 <pre>docker run -d --name ivt-clickhouse -p 8123:8123 -e CLICKHOUSE_DB=provenance \
   -e CLICKHOUSE_USER=dev -e CLICKHOUSE_PASSWORD=dev clickhouse/clickhouse-server:25.8
+npm test                                                   # all tests
 npm run provenance:local                                   # full daily job, prints the report
 CLICKHOUSE_URL=http://localhost:8123 npm run test:provenance  # incl. end-to-end tests</pre>
 
