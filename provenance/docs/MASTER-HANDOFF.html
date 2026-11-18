@@ -49,7 +49,8 @@ tr:last-child td{border-bottom:0}
 .steps>li::before{content:counter(s);position:absolute;left:12px;top:10px;width:24px;height:24px;border-radius:50%;background:var(--soft);color:var(--accent);font:700 13px/24px var(--f-display);text-align:center}
 .who{font:600 11px var(--f-body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-left:6px}
 .tag{display:inline-block;font:600 11px/1.4 var(--f-body);padding:1px 7px;border-radius:4px;margin-right:4px}
-.t-old{background:var(--line);color:var(--ink)} .t-new{background:var(--soft);color:var(--accent)}
+.t-old{background:var(--line);color:var(--ink)} .t-ap{background:var(--softwarn);color:var(--warn)} .t-new{background:var(--soft);color:var(--accent)}
+tr.grp td{background:var(--bg);font:600 12px var(--f-body);letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
 td code{white-space:nowrap}
 .check{list-style:none;padding:0} .check li::before{content:"☐ ";color:var(--accent)}
 svg{display:block;width:100%;height:auto}
@@ -68,7 +69,7 @@ svg .hook{stroke:var(--accent);stroke-width:2.2;fill:none;marker-end:url(#ah2)}
 <main>
 <div class="eyebrow">IVT · Traffic Provenance · partner handoff · 2026-11-18</div>
 <h1>Traffic Provenance Handoff</h1>
-<p class="lede">Checks whether an affiliate's visitors really came from the Google ads they claim to have bought. Written for a reviewer new to the code: what was already in the IVT before, what we added, how the pieces connect, how the data is stored, and what's left before going live.</p>
+<p class="lede">Checks whether an affiliate's visitors really came from the Google ads they claim to have bought. Written for a reviewer new to the code: what was already in the IVT, what we built on top (Ad Pass, then Traffic Provenance), how the pieces connect, how the data is stored, and what's left before going live.</p>
 
 <div class="card">
 <h3 style="margin-top:0">In one minute</h3>
@@ -77,7 +78,7 @@ svg .hook{stroke:var(--accent);stroke-width:2.2;fill:none;marker-end:url(#ah2)}
   <li><b>Check:</b> every real Google ad click carries a unique <code>gclid</code>, and Google keeps a list of every gclid it billed. Each day we pull that list and match it against the gclids that reached our sites. We also compare counts: our visits vs Google's clicks.</li>
   <li><b>Result per affiliate:</b> <span class="pill p-ok">OK</span> <span class="pill p-warn">WATCH</span> <span class="pill p-warn">THROTTLE</span> <span class="pill p-bad">BLOCK</span>. A BLOCK is only a <b>recommendation</b>: a person reviews it and turns ads off for that affiliate by hand.</li>
   <li><b>Manual for now:</b> while we validate the results, nothing is blocked automatically. People review every BLOCK. Automatic blocking is one config switch for later (section 5).</li>
-  <li><b>Fit:</b> a separate service. The existing code got one small change (Hook A, built, <b>off by default</b>). The kill switch it acts through (Hook B) already existed in Ad Pass.</li>
+  <li><b>Fit:</b> a separate service. It plugs into the IVT Worker with one small change (Hook A, built, <b>off by default</b>). It acts through the per-affiliate kill switch (Hook B) that we built earlier as part of Ad Pass.</li>
   <li><b>Status:</b> engine, ClickHouse storage, batch job, Hook A and tests are built and run locally against a fake Google API. Not deployed. No real Google token yet. Google only; Meta later.</li>
 </ul>
 </div>
@@ -86,45 +87,59 @@ svg .hook{stroke:var(--accent);stroke-width:2.2;fill:none;marker-end:url(#ah2)}
 <div class="card scroll">
 <table>
 <tr><th>Piece</th><th>Question it answers</th><th>When</th><th>Stores in</th><th>State</th></tr>
-<tr><td><b>Existing IVT</b></td><td>Does this visit look like a bot? (network, browser, behaviour signals)</td><td>live, every visit</td><td>D1 <code>traffic_sessions</code></td><td><span class="pill p-acc">shadow mode</span></td></tr>
-<tr><td><b>Ad Pass</b> (gate pass)</td><td>May this visit show ads right now? Yes or no</td><td>live, every page and refresh</td><td>KV kill switches <code>ads:global</code>, <code>ads:site:&lt;key&gt;</code>, <code>ads:aff:&lt;id&gt;</code></td><td><span class="pill p-acc">branch chandra/ad-pass</span></td></tr>
-<tr><td><b>Traffic Provenance</b> (this)</td><td>Was this affiliate's traffic really bought on Google, and from clean placements?</td><td>batch, every 6 hours</td><td>ClickHouse (raw) + D1 (verdicts, review queue)</td><td><span class="pill p-acc">branch chandra/traffic-provenance</span></td></tr>
+<tr><td><b>IVT</b> <span class="tag t-old">EXISTED</span></td><td>Does this visit look like a bot? (network, browser, behaviour signals)</td><td>live, every visit</td><td>D1 <code>traffic_sessions</code></td><td><span class="pill p-acc">shadow mode</span></td></tr>
+<tr><td><b>Ad Pass</b> (gate pass) <span class="tag t-ap">WE BUILT · earlier</span></td><td>May this visit show ads right now? Yes or no</td><td>live, every page and refresh</td><td>KV kill switches <code>ads:global</code>, <code>ads:site:&lt;key&gt;</code>, <code>ads:aff:&lt;id&gt;</code></td><td><span class="pill p-acc">built · branch chandra/ad-pass</span></td></tr>
+<tr><td><b>Traffic Provenance</b> <span class="tag t-new">WE BUILT · this work</span></td><td>Was this affiliate's traffic really bought on Google, and from clean placements?</td><td>batch, every 6 hours</td><td>ClickHouse (raw) + D1 (verdicts, review queue)</td><td><span class="pill p-acc">branch chandra/traffic-provenance</span></td></tr>
 </table>
 </div>
 <p class="muted small">The IVT judges <i>one visit</i>. Provenance judges <i>an affiliate's traffic over thousands of visits</i>, using Google's own records. They catch different fraud: a perfect human browser on a porn placement passes the IVT but fails Provenance.</p>
 
-<h2><span class="n">2</span>What already existed, what we added</h2>
-<p><span class="tag t-old">EXISTED</span> was in the code before this work and is unchanged. <span class="tag t-new">ADDED</span> is new from this work.</p>
+<h2><span class="n">2</span>What already existed, what we built</h2>
+<p>Three layers, each on top of the one before it:</p>
+<ul>
+  <li><span class="tag t-old">EXISTED</span> the IVT, which was in the code before our work and is unchanged by it;</li>
+  <li><span class="tag t-ap">WE BUILT · AD PASS</span> the first layer we added, on branch <code>chandra/ad-pass</code>;</li>
+  <li><span class="tag t-new">WE BUILT · PROVENANCE</span> this work, on branch <code>chandra/traffic-provenance</code>.</li>
+</ul>
 <div class="card scroll">
 <table>
 <tr><th></th><th>Part</th><th>What it does</th><th>Where</th></tr>
-<tr><td><span class="tag t-old">EXISTED</span></td><td>IVT SDK</td><td>Script on our sites. Collects browser evidence and the click ids in the URL, then calls <code>/v1/admit</code>.</td><td><code>src/sdk/ivt.ts</code></td></tr>
-<tr><td><span class="tag t-old">EXISTED</span></td><td>IVT Worker</td><td>Scores each visit (network, browser, identity, behaviour). Stores sessions in D1, with the gclid <b>hashed</b>.</td><td><code>src/worker.ts</code>, <code>migrations/</code></td></tr>
-<tr><td><span class="tag t-old">EXISTED</span></td><td>Ad Pass</td><td>Issues a 30-minute pass on admit. <code>/v1/ad-check</code> answers yes or no for ads.</td><td><code>src/adpass.ts</code></td></tr>
-<tr><td><span class="tag t-old">EXISTED</span></td><td>Kill switches</td><td>KV keys <code>ads:global</code>, <code>ads:site:&lt;key&gt;</code>, <code>ads:aff:&lt;id&gt;</code>. Set one to <code>off</code> and Ad Pass stops ads for it.</td><td>KV <code>IVT_CONFIG</code></td></tr>
-<tr><td><span class="tag t-old">EXISTED</span></td><td><code>?aff=</code> affiliate id</td><td>The SDK reads it, remembers it for the tab, and Ad Pass checks it.</td><td><code>src/sdk/ivt.ts</code>, <code>src/adpass.ts</code></td></tr>
-<tr><td><span class="tag t-new">ADDED</span></td><td>Hook A1 · SDK keys</td><td>The SDK also forwards <code>cid</code>, <code>ag</code>, <code>net</code>, <code>dev</code>, <code>plc</code> and <code>route</code>, the values from the partner's Google tracking template.</td><td><code>src/sdk/ivt.ts</code> (key list)</td></tr>
-<tr><td><span class="tag t-new">ADDED</span></td><td>Hook A2 · landing to queue</td><td><code>/v1/admit</code> puts each landing on a queue: session id, time, site, aff, full URL, hashed IP and UA, device. Fire-and-forget. <b>Off</b> unless <code>PROVENANCE_MODE=on</code> and a <code>PROVENANCE_Q</code> queue is bound.</td><td><code>src/provenance-hook.ts</code>, 8 lines in <code>src/worker.ts</code></td></tr>
-<tr><td><span class="tag t-new">ADDED</span></td><td>Rules engine</td><td>Turns landings plus Google's data into OK / WATCH / THROTTLE / BLOCK per affiliate. Pure code, no I/O.</td><td><code>provenance/src/</code></td></tr>
-<tr><td><span class="tag t-new">ADDED</span></td><td>Google Ads client</td><td>Read-only. Pulls every click (<code>click_view</code>) and daily click totals for each account.</td><td><code>provenance/pipeline/googleAds.ts</code></td></tr>
-<tr><td><span class="tag t-new">ADDED</span></td><td>ClickHouse storage</td><td>Raw landings and Google clicks, matched with SQL (section 6).</td><td><code>provenance/pipeline/clickhouse/</code></td></tr>
-<tr><td><span class="tag t-new">ADDED</span></td><td>Batch job + Provenance Worker</td><td>Runs every 6 hours, one queue message per partner. Separate from the IVT Worker.</td><td><code>provenance/pipeline/job.ts</code>, <code>worker.ts</code></td></tr>
-<tr><td><span class="tag t-new">ADDED</span></td><td>Review queue (D1)</td><td>Holds BLOCK recommendations for a person to apply or dismiss.</td><td><code>provenance/pipeline/d1/0001_provenance.sql</code></td></tr>
-<tr><td><span class="tag t-new">ADDED</span></td><td>Tests, local runner, demo</td><td>127 Provenance tests and 5 Hook A tests. A local run against a fake Google API. A browser lab.</td><td><code>provenance/tests/</code>, <code>tests/provenance-hook.test.ts</code></td></tr>
+<tr class="grp"><td colspan="4">IVT: bot scoring per visit (existed)</td></tr>
+<tr><td><span class="tag t-old">EXISTED</span></td><td>IVT SDK</td><td>Script on our sites. Collects browser evidence and the click ids in the URL (gclid, utm_* …), calls <code>/v1/admit</code>, then sends signed behaviour telemetry.</td><td><code>src/sdk/ivt.ts</code>, <code>src/sdk/telemetry.ts</code></td></tr>
+<tr><td><span class="tag t-old">EXISTED</span></td><td>IVT Worker</td><td>Scores each visit on network (IPinfo, observe only), browser, identity / replay and behaviour. Runs in shadow mode.</td><td><code>src/worker.ts</code>, <code>src/network.ts</code>, <code>src/identity.ts</code></td></tr>
+<tr><td><span class="tag t-old">EXISTED</span></td><td>IVT storage</td><td>D1 <code>traffic_sessions</code> and related tables. The gclid is stored only as a <b>hash</b>, and there is no affiliate column.</td><td><code>migrations/</code></td></tr>
+<tr><td><span class="tag t-old">EXISTED</span></td><td>Monetization eligibility</td><td>The admit response says whether the visit may be monetised.</td><td><code>src/eligibility.ts</code></td></tr>
+
+<tr class="grp"><td colspan="4">Ad Pass: may this visit show ads? (we built, earlier)</td></tr>
+<tr><td><span class="tag t-ap">AD PASS</span></td><td>Ad Pass token</td><td>A signed 30-minute pass issued on <code>/v1/admit</code> when the visit is eligible. It can be reused across pages and refreshes.</td><td><code>src/adpass.ts</code>, hook in <code>src/worker.ts</code></td></tr>
+<tr><td><span class="tag t-ap">AD PASS</span></td><td><code>/v1/ad-check</code></td><td>Before an ad loads, answers yes or no. The Worker doesn't manage ad units.</td><td><code>src/adpass.ts</code></td></tr>
+<tr><td><span class="tag t-ap">AD PASS</span></td><td>Kill switches</td><td>KV keys <code>ads:global</code>, <code>ads:site:&lt;key&gt;</code> and <code>ads:aff:&lt;id&gt;</code>. Set one to <code>off</code> and ads stop for it. <b>Provenance acts through <code>ads:aff</code> (Hook B).</b></td><td>KV <code>IVT_CONFIG</code></td></tr>
+<tr><td><span class="tag t-ap">AD PASS</span></td><td><code>?aff=</code> affiliate id</td><td>The SDK reads it and remembers it for the tab. Several affiliates per site are supported.</td><td><code>src/sdk/ivt.ts</code>, <code>src/adpass.ts</code></td></tr>
+<tr><td><span class="tag t-ap">AD PASS</span></td><td>Reference ad gate, demo, tests</td><td>A page snippet that calls <code>/v1/ad-check</code> before loading ads, plus an in-browser demo and tests.</td><td><code>docs/ad-pass/</code>, <code>tests/adpass.test.ts</code>, <code>tests/ivt-adpass.test.ts</code></td></tr>
+
+<tr class="grp"><td colspan="4">Traffic Provenance: was the traffic really bought on Google? (we built, this work)</td></tr>
+<tr><td><span class="tag t-new">PROVENANCE</span></td><td>Hook A1 · SDK keys</td><td>The SDK also forwards <code>cid</code>, <code>ag</code>, <code>net</code>, <code>dev</code>, <code>plc</code> and <code>route</code>, the values from the partner's Google tracking template.</td><td><code>src/sdk/ivt.ts</code> (key list)</td></tr>
+<tr><td><span class="tag t-new">PROVENANCE</span></td><td>Hook A2 · landing to queue</td><td><code>/v1/admit</code> puts each landing on a queue: session id, time, site, aff, full URL, hashed IP and UA, and device. Fire-and-forget. <b>Off</b> unless <code>PROVENANCE_MODE=on</code> and a <code>PROVENANCE_Q</code> queue is bound.</td><td><code>src/provenance-hook.ts</code>, 8 lines in <code>src/worker.ts</code></td></tr>
+<tr><td><span class="tag t-new">PROVENANCE</span></td><td>Rules engine</td><td>Turns landings plus Google's data into OK / WATCH / THROTTLE / BLOCK per affiliate. Pure code, no I/O.</td><td><code>provenance/src/</code></td></tr>
+<tr><td><span class="tag t-new">PROVENANCE</span></td><td>Google Ads client</td><td>Read-only. Pulls every click (<code>click_view</code>) and the daily click totals for each account.</td><td><code>provenance/pipeline/googleAds.ts</code></td></tr>
+<tr><td><span class="tag t-new">PROVENANCE</span></td><td>ClickHouse storage</td><td>Raw landings and Google clicks, matched with SQL (section 6).</td><td><code>provenance/pipeline/clickhouse/</code></td></tr>
+<tr><td><span class="tag t-new">PROVENANCE</span></td><td>Batch job + Provenance Worker</td><td>Runs every 6 hours, one queue message per partner. A separate Worker from the IVT one.</td><td><code>provenance/pipeline/job.ts</code>, <code>worker.ts</code></td></tr>
+<tr><td><span class="tag t-new">PROVENANCE</span></td><td>Review queue (D1)</td><td>Holds BLOCK recommendations for a person to apply or dismiss.</td><td><code>provenance/pipeline/d1/0001_provenance.sql</code></td></tr>
+<tr><td><span class="tag t-new">PROVENANCE</span></td><td>Tests, local runner, demo</td><td>127 Provenance tests and 5 Hook A tests. A local run against a fake Google API, and a browser lab.</td><td><code>provenance/tests/</code>, <code>tests/provenance-hook.test.ts</code></td></tr>
 </table>
 </div>
-<p class="muted small"><b>Not changed:</b> IVT scoring, D1 IVT tables, Ad Pass logic, KV keys, <code>wrangler.jsonc</code> and migrations. With <code>PROVENANCE_MODE</code> unset, the Worker behaves exactly as before.</p>
+<p class="muted small"><b>Not changed by Provenance:</b> IVT scoring, the IVT D1 tables, Ad Pass logic, the KV keys, <code>wrangler.jsonc</code> and the migrations. With <code>PROVENANCE_MODE</code> unset, the Worker behaves exactly as it does with Ad Pass alone.</p>
 
 <h2><span class="n">3</span>How it connects: an independent service, two hooks</h2>
 <p>Provenance is its own service. It is joined to the existing code at two points: Hook A brings data in, and Hook B acts on the result.</p>
 
 <div class="card scroll">
-<svg viewBox="0 0 900 390" role="img" aria-label="Visitors go through the SDK to the IVT and Ad Pass Worker; hook A forwards each landing to a queue; the separate Provenance Worker pulls Google clicks, matches in ClickHouse and puts BLOCKs in a review queue; a person sets the kill switch in KV, which Ad Pass already reads" style="min-width:720px">
+<svg viewBox="0 0 900 390" role="img" aria-label="Visitors go through the SDK to the IVT and Ad Pass Worker; hook A forwards each landing to a queue; the separate Provenance Worker pulls Google clicks, matches in ClickHouse and puts BLOCKs in a review queue; a person sets the Ad Pass kill switch in KV" style="min-width:720px">
   <defs>
     <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="var(--muted)"/></marker>
     <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="var(--accent)"/></marker>
   </defs>
-  <text class="m" x="20" y="22">EXISTING · live, per visit</text>
+  <text class="m" x="20" y="22">LIVE · per visit · IVT (existed) + Ad Pass (we built earlier)</text>
   <rect class="g" x="10" y="30" width="520" height="150" rx="12"/>
   <rect class="b" x="30" y="60" width="130" height="64" rx="10"/><text x="95" y="86" text-anchor="middle">Visitor + SDK</text><text class="mono" x="95" y="106" text-anchor="middle">?aff=42&amp;gclid=…</text>
   <path class="ar" d="M160 92 H200"/>
@@ -136,7 +151,7 @@ svg .hook{stroke:var(--accent);stroke-width:2.2;fill:none;marker-end:url(#ah2)}
   <path class="hook" d="M285 134 V230 H560"/>
   <text x="300" y="168" style="font-weight:700;fill:var(--accent)">Hook A</text><text class="m" x="300" y="184">forward each landing</text><text class="m" x="300" y="198">(added · off by default)</text>
 
-  <text class="m" x="560" y="22">NEW · separate Worker, every 6 hours</text>
+  <text class="m" x="560" y="22">PROVENANCE · separate Worker, every 6 h</text>
   <rect class="g" x="550" y="30" width="340" height="340" rx="12"/>
   <rect class="b" x="565" y="205" width="120" height="50" rx="10"/><text x="625" y="235" text-anchor="middle">Queue</text>
   <rect class="a" x="705" y="50" width="170" height="64" rx="10"/><text x="790" y="76" text-anchor="middle">Google Ads API</text><text class="m" x="790" y="96" text-anchor="middle">every click, read-only</text>
@@ -152,8 +167,8 @@ svg .hook{stroke:var(--accent);stroke-width:2.2;fill:none;marker-end:url(#ah2)}
   <path class="hook" d="M400 296 V270 H457 V140"/>
   <text x="470" y="262" style="font-weight:700;fill:var(--accent)">Hook B</text>
   <text class="mono" x="40" y="320">KV  ads:aff:42 = off</text>
-  <text class="m" x="40" y="340">Ad Pass already reads this key.</text>
-  <text class="m" x="40" y="356">Already existed. Nothing new built.</text>
+  <text class="m" x="40" y="340">Ad Pass (built earlier) reads this key.</text>
+  <text class="m" x="40" y="356">Nothing new built for Provenance.</text>
 </svg>
 </div>
 
@@ -177,7 +192,7 @@ svg .hook{stroke:var(--accent);stroke-width:2.2;fill:none;marker-end:url(#ah2)}
 <tr><th>Hook</th><th>Where</th><th>Change</th><th>State</th></tr>
 <tr><td><b>A1</b></td><td>SDK <code>src/sdk/ivt.ts</code> → <code>attributionEvidence()</code></td><td>Also forward <code>cid</code>, <code>ag</code>, <code>net</code>, <code>dev</code>, <code>plc</code> (Google tracking-template values) and the route key.</td><td><span class="pill p-ok">built</span></td></tr>
 <tr><td><b>A2</b></td><td>Worker <code>/v1/admit</code> → <code>src/provenance-hook.ts</code></td><td><code>ctx.waitUntil(env.PROVENANCE_Q.send(…))</code> with session id, time, site, aff, the full landing URL, hashed IP and UA, and device. Sent before the BLOCK return, so blocked visits are counted too. A queue error is ignored: admit never waits and never fails because of it.</td><td><span class="pill p-ok">built · off</span><br><span class="small muted">to switch on: add the queue binding and <code>PROVENANCE_MODE=on</code></span></td></tr>
-<tr><td><b>B</b></td><td>KV <code>ads:aff:&lt;id&gt;</code></td><td>None. Ad Pass already turns ads off for that affiliate on every site.</td><td><span class="pill p-acc">existed</span></td></tr>
+<tr><td><b>B</b></td><td>KV <code>ads:aff:&lt;id&gt;</code></td><td>None. The Ad Pass kill switch we built earlier already turns ads off for that affiliate on every site.</td><td><span class="pill p-acc">built with Ad Pass</span></td></tr>
 <tr><td class="muted">later</td><td>Ad Pass</td><td>Read a THROTTLE key (e.g. <code>adcap:aff:&lt;id&gt;</code> = fewer ads) if we want a middle step between on and off.</td><td>open</td></tr>
 <tr><td class="muted">later</td><td>IVT scoring</td><td>Use the affiliate's Provenance tier as one input to the visit's source risk.</td><td>optional</td></tr>
 </table>
@@ -224,7 +239,7 @@ svg .hook{stroke:var(--accent);stroke-width:2.2;fill:none;marker-end:url(#ah2)}
     <li>Once thresholds are tuned and no false BLOCKs appear on partners we trust, set <code>enforcement.autoBlock = true</code>.</li>
     <li>The job then writes <code>ads:aff:&lt;id&gt; = off</code> itself, using the same evidence and circuit breaker (2 bad windows, or one very clear one).</li>
     <li>Recommended: automate one tier at a time (e.g. only "foreign/forged gclids" first), keep the audit log, and alert on every automatic block.</li>
-    <li>No other code change is needed; the switch already exists and is tested.</li>
+    <li>No other code change is needed; the auto-block option is already in the code and tested.</li>
   </ul></div>
 </div>
 
